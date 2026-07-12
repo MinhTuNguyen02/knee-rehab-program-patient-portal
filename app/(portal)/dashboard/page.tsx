@@ -1,18 +1,19 @@
-import { getPatientProfile, getAssessments } from '@/app/actions/patient';
+'use client';
+
+import { usePatientProfile } from '@/hooks/usePatientProfile';
+import { useAssessmentHistory } from '@/hooks/useAssessmentHistory';
 import Link from 'next/link';
 import { ArrowRight, MessageCircle, UserCircle, Activity, ChevronRight, Calendar, AlertCircle } from 'lucide-react';
 
-export default async function DashboardPage() {
-    const profileResponse = await getPatientProfile();
-    const patient = profileResponse.data;
+export default function DashboardPage() {
+    const { profile: patient, loading: profileLoading, error: profileError } = usePatientProfile();
+    const { assessments, loading: historyLoading, error: historyError } = useAssessmentHistory();
+
     const latest = patient?.latestAssessment;
 
-    // Fetch the 5 most recent assessments to show the trend
-    const assessmentsResponse = await getAssessments(undefined, 5);
-    const assessments = assessmentsResponse.data || [];
-
-    // Reverse to chronological order (oldest to newest)
-    const trendData = [...assessments].reverse();
+    // Take the 5 most recent assessments to show the trend
+    const recentAssessments = assessments.slice(0, 5);
+    const trendData = [...recentAssessments].reverse();
 
     // Determine zone color styling
     let zoneStyles = {
@@ -49,6 +50,26 @@ export default async function DashboardPage() {
             badgeText: 'Red',
             hex: '#EF4444'
         };
+    }
+
+    if (profileLoading || (historyLoading && assessments.length === 0)) {
+        return (
+            <div className="pb-12 max-w-6xl mx-auto flex flex-col items-center justify-center min-h-[50vh]">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
+                <p className="mt-4 text-gray-500 text-sm">Loading your rehab summary...</p>
+            </div>
+        );
+    }
+
+    if (profileError || historyError) {
+        return (
+            <div className="pb-12 max-w-6xl mx-auto space-y-4">
+                <div className="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <p>{profileError || historyError || 'Failed to load dashboard data.'}</p>
+                </div>
+            </div>
+        );
     }
 
     // SVG Line Chart generation

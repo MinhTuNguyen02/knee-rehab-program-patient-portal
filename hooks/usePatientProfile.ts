@@ -1,56 +1,51 @@
-import { useState, useEffect } from 'react';
-import { getPatientProfile, PatientProfile } from '@/app/actions/patient';
+import useSWR from 'swr';
 
-let cachedProfile: PatientProfile | null = null;
-let cachedError: string | null = null;
-let isFetchingProfile = false;
-const listeners = new Set<() => void>();
+export interface PatientProfile {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    mobile?: string;
+    notificationPrefs?: Record<string, boolean>;
+    latestAssessment?: {
+        id: string;
+        score: number;
+        zone: string;
+        createdAt: string;
+    };
+}
 
 export function usePatientProfile() {
-    const [profile, setProfile] = useState<PatientProfile | null>(cachedProfile);
-    const [loading, setLoading] = useState<boolean>(!cachedProfile && isFetchingProfile);
-    const [error, setError] = useState<string | null>(cachedError);
-
-    useEffect(() => {
-        const handleChange = () => {
-            setProfile(cachedProfile);
-            setError(cachedError);
-            setLoading(!cachedProfile && isFetchingProfile);
-        };
-        listeners.add(handleChange);
-
-        if (!cachedProfile && !isFetchingProfile && !cachedError) {
-            isFetchingProfile = true;
-            setLoading(true);
-            getPatientProfile().then(res => {
-                isFetchingProfile = false;
-                if (res.error) {
-                    cachedError = res.error.message;
-                } else if (res.data) {
-                    cachedProfile = res.data;
-                }
-                listeners.forEach(l => l());
-            }).catch(err => {
-                isFetchingProfile = false;
-                cachedError = err.message || 'Failed to fetch profile';
-                listeners.forEach(l => l());
-            });
+    const { data, error, isLoading, isValidating, mutate } = useSWR<PatientProfile | null>(
+        '/api/patient/me',
+        async (url) => {
+            const res = await fetch(url);
+            const json = await res.json();
+            if (!res.ok) {
+                throw new Error(json.error?.message || 'Failed to load profile');
+            }
+            // Backend returns { data: PatientProfile } or PatientProfile
+            return json.data || json;
+        },
+        {
+            revalidateOnFocus: false,
         }
+    );
 
-        return () => {
-            listeners.delete(handleChange);
-        };
-    }, []);
-
-    const mutate = async (newData?: Partial<PatientProfile>) => {
-        if (newData) {
-            cachedProfile = { ...cachedProfile, ...newData } as PatientProfile;
+    const mutateProfile = async (newData?: Partial<PatientProfile> | null) => {
+        if (newData === null) {
+            await mutate(null, false);
+        } else if (newData) {
+            await mutate((current) => current ? { ...current, ...newData } : null, false);
         } else {
-            cachedProfile = null;
-            cachedError = null;
+            await mutate();
         }
-        listeners.forEach(l => l());
     };
 
-    return { profile, loading, error, mutate };
+    return {
+        profile: data || null,
+        loading: isLoading,
+        error: error ? error.message : null,
+        mutate: mutateProfile
+    };
 }

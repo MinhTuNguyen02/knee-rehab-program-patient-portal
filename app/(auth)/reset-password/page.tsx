@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition, use } from 'react';
-import { resetPassword } from '@/app/actions/auth';
+import { validatePassword } from '@/lib/utils';
 import Link from 'next/link';
 import { Lock, AlertCircle, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
@@ -15,31 +15,74 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     
     const [status, setStatus] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
+    const [fieldErrors, setFieldErrors] = useState<{ password?: string; confirmPassword?: string }>({});
     const [isPending, startTransition] = useTransition();
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         setStatus(null);
+        setFieldErrors({});
 
         if (!token) {
             setStatus({ type: 'error', message: 'Missing reset token' });
             return;
         }
 
+        let hasError = false;
+        const newFieldErrors: typeof fieldErrors = {};
+
+        const passwordVal = validatePassword(password);
+        if (!passwordVal.isValid) {
+            newFieldErrors.password = passwordVal.error;
+            hasError = true;
+        }
+
         if (password !== confirmPassword) {
-            setStatus({ type: 'error', message: 'Passwords do not match.' });
+            newFieldErrors.confirmPassword = 'Passwords do not match.';
+            hasError = true;
+        }
+
+        if (hasError) {
+            setFieldErrors(newFieldErrors);
             return;
         }
 
-        const formData = new FormData(e.currentTarget);
-        formData.append('token', token);
-        
         startTransition(async () => {
-            const result = await resetPassword(formData);
-            if (result?.error) {
-                setStatus({ type: 'error', message: result.error });
-            } else if (result?.success) {
-                setStatus({ type: 'success', message: result.success });
+            try {
+                const res = await fetch('/api/auth/reset-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, newPassword: password }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    const errorMsgs = Array.isArray(data.message)
+                        ? data.message
+                        : (data.error?.message ? [data.error.message] : [data.message || 'Failed to reset password']);
+                    const backendFieldErrors: typeof fieldErrors = {};
+                    let genericError: string | null = null;
+
+                    errorMsgs.forEach((msg: string) => {
+                        const lowercaseMsg = msg.toLowerCase();
+                        if (lowercaseMsg.includes('password')) {
+                            backendFieldErrors.password = msg;
+                        } else {
+                            genericError = msg;
+                        }
+                    });
+
+                    if (Object.keys(backendFieldErrors).length > 0) {
+                        setFieldErrors(backendFieldErrors);
+                    }
+                    if (genericError) {
+                        setStatus({ type: 'error', message: genericError });
+                    }
+                } else {
+                    const msg = data.data?.message || data.message || 'Password reset successfully';
+                    setStatus({ type: 'success', message: msg });
+                }
+            } catch (err: any) {
+                setStatus({ type: 'error', message: 'Failed to connect to the server' });
             }
         });
     }
@@ -114,10 +157,13 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
                                         name="newPassword" 
                                         type={showPassword ? 'text' : 'password'}
                                         required 
-                                        minLength={8}
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
-                                        className="block w-full rounded-lg border-0 py-2.5 pl-10 pr-10 text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-primary dark:bg-slate-800 dark:text-white dark:ring-slate-700 sm:text-sm sm:leading-6"
+                                        className={`block w-full rounded-lg border-0 py-2.5 pl-10 pr-10 text-slate-900 ring-1 ring-inset placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-primary dark:bg-slate-800 dark:text-white sm:text-sm sm:leading-6 ${
+                                            fieldErrors.password 
+                                                ? 'ring-red-300 focus:ring-red-500 dark:ring-red-900/50' 
+                                                : 'ring-slate-300 focus:ring-primary dark:ring-slate-700'
+                                        }`}
                                         placeholder="••••••••"
                                     />
                                     <button
@@ -129,6 +175,11 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
                                         {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
                                     </button>
                                 </div>
+                                {fieldErrors.password && (
+                                    <p className="text-xs text-red-600 dark:text-red-450 mt-1" role="alert">
+                                        {fieldErrors.password}
+                                    </p>
+                                )}
                                 <p className="text-xs text-gray-405 dark:text-gray-500 mt-1.5 flex items-start gap-1">
                                     <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                                     <span>Minimum 8 characters, at least 1 uppercase letter and 1 number.</span>
@@ -149,7 +200,11 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
                                         required 
                                         value={confirmPassword}
                                         onChange={(e) => setConfirmPassword(e.target.value)}
-                                        className="block w-full rounded-lg border-0 py-2.5 pl-10 pr-10 text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-primary dark:bg-slate-800 dark:text-white dark:ring-slate-700 sm:text-sm sm:leading-6"
+                                        className={`block w-full rounded-lg border-0 py-2.5 pl-10 pr-10 text-slate-900 ring-1 ring-inset placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-primary dark:bg-slate-800 dark:text-white sm:text-sm sm:leading-6 ${
+                                            fieldErrors.confirmPassword 
+                                                ? 'ring-red-300 focus:ring-red-500 dark:ring-red-900/50' 
+                                                : 'ring-slate-300 focus:ring-primary dark:ring-slate-700'
+                                        }`}
                                         placeholder="••••••••"
                                     />
                                     <button
@@ -161,6 +216,11 @@ export default function ResetPasswordPage({ searchParams }: { searchParams: Prom
                                         {showConfirmPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
                                     </button>
                                 </div>
+                                {fieldErrors.confirmPassword && (
+                                    <p className="text-xs text-red-600 dark:text-red-450 mt-1" role="alert">
+                                        {fieldErrors.confirmPassword}
+                                    </p>
+                                )}
                             </div>
                         </div>
 

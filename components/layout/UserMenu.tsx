@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useTransition } from 'react';
 import Link from 'next/link';
-import { logout } from '@/app/actions/auth';
+import { useRouter } from 'next/navigation';
 import { User, LogOut, ChevronDown } from 'lucide-react';
 
 interface UserMenuProps {
@@ -15,6 +15,7 @@ export default function UserMenu({ firstName, lastName, email }: UserMenuProps) 
     const [isOpen, setIsOpen] = useState(false);
     const [isPending, startTransition] = useTransition();
     const menuRef = useRef<HTMLDivElement>(null);
+    const router = useRouter();
 
     const fullName = `${firstName} ${lastName}`;
     const initials = `${firstName[0] || ''}${lastName[0] || ''}`.toUpperCase();
@@ -31,7 +32,12 @@ export default function UserMenu({ firstName, lastName, email }: UserMenuProps) 
 
     const handleLogout = () => {
         startTransition(async () => {
-            await logout();
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+            } catch (err) {
+                // ignore
+            }
+            router.push('/login');
         });
     };
 

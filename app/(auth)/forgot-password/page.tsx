@@ -1,26 +1,65 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { forgotPassword } from '@/app/actions/auth';
+import { validateEmail } from '@/lib/utils';
 import Link from 'next/link';
 import { Mail, ArrowLeft } from 'lucide-react';
 
 export default function ForgotPasswordPage() {
     const [status, setStatus] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
+    const [emailError, setEmailError] = useState<string | null>(null);
     const [isPending, startTransition] = useTransition();
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         setStatus(null);
+        setEmailError(null);
 
         const formData = new FormData(e.currentTarget);
+        const email = formData.get('email') as string;
+
+        if (!email) {
+            setEmailError('Email address is required.');
+            return;
+        } else if (!validateEmail(email)) {
+            setEmailError('Please enter a valid email address.');
+            return;
+        }
 
         startTransition(async () => {
-            const result = await forgotPassword(formData);
-            if (result?.error) {
-                setStatus({ type: 'error', message: result.error });
-            } else if (result?.success) {
-                setStatus({ type: 'success', message: result.success });
+            try {
+                const res = await fetch('/api/auth/forgot-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    const errorMsgs = Array.isArray(data.message)
+                        ? data.message
+                        : (data.error?.message ? [data.error.message] : [data.message || 'Failed to process request']);
+                    let fieldErr: string | null = null;
+                    let genericErr: string | null = null;
+
+                    errorMsgs.forEach((msg: string) => {
+                        if (msg.toLowerCase().includes('email')) {
+                            fieldErr = msg;
+                        } else {
+                            genericErr = msg;
+                        }
+                    });
+
+                    if (fieldErr) {
+                        setEmailError(fieldErr);
+                    } else if (genericErr) {
+                        setStatus({ type: 'error', message: genericErr });
+                    }
+                } else {
+                    const msg = data.data?.message || data.message || 'Check your email for a reset link';
+                    setStatus({ type: 'success', message: msg });
+                }
+            } catch (err: any) {
+                setStatus({ type: 'error', message: 'Failed to connect to the server' });
             }
         });
     }
@@ -72,11 +111,19 @@ export default function ForgotPasswordPage() {
                                     id="email"
                                     name="email"
                                     type="email"
-                                    required
-                                    className="block w-full rounded-lg border-0 py-2.5 pl-10 pr-3 text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-primary dark:bg-slate-800 dark:text-white dark:ring-slate-700 sm:text-sm sm:leading-6"
+                                    className={`block w-full rounded-lg border-0 py-2.5 pl-10 pr-3 text-slate-900 ring-1 ring-inset placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-primary dark:bg-slate-800 dark:text-white sm:text-sm sm:leading-6 ${
+                                        emailError 
+                                            ? 'ring-red-300 focus:ring-red-500 dark:ring-red-900/50' 
+                                            : 'ring-slate-300 focus:ring-primary dark:ring-slate-700'
+                                    }`}
                                     placeholder="you@example.com"
                                 />
                             </div>
+                            {emailError && (
+                                <p className="text-xs text-red-600 dark:text-red-450 mt-1" role="alert">
+                                    {emailError}
+                                </p>
+                            )}
                         </div>
 
                         <button

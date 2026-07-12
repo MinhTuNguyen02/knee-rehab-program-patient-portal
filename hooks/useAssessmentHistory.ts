@@ -1,63 +1,58 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getAssessments, AssessmentResponse } from '@/app/actions/patient';
+import useSWRInfinite from 'swr/infinite';
+
+export interface AssessmentResponse {
+    id: string;
+    score: number;
+    zone: string;
+    pain: number;
+    functionScore: number;
+    createdAt: string;
+}
 
 export function useAssessmentHistory() {
-    const [assessments, setAssessments] = useState<AssessmentResponse[]>([]);
-    const [loading, setLoading] = useState<boolean>(true);
-    const [loadingMore, setLoadingMore] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
-    const [hasMore, setHasMore] = useState<boolean>(false);
-    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const getKey = (pageIndex: number, previousPageData: any) => {
+        if (previousPageData && !previousPageData.meta?.hasMore) return null;
+        if (pageIndex === 0) return `/api/patient/assessments?limit=10`;
+        return `/api/patient/assessments?limit=10&before=${encodeURIComponent(previousPageData.meta?.nextCursor)}`;
+    };
 
-    const loadInitial = useCallback(async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const result = await getAssessments();
-            if (result.error) {
-                setError(result.error.message);
-            } else {
-                setAssessments(result.data || []);
-                setHasMore(result.meta?.hasMore || false);
-                setNextCursor(result.meta?.nextCursor || null);
+    const { data, error, size, setSize, isLoading, isValidating, mutate } = useSWRInfinite<any>(
+        getKey,
+        async (url) => {
+            const res = await fetch(url);
+            const json = await res.json();
+            if (!res.ok) {
+                throw new Error(json.error?.message || 'Failed to load assessments');
             }
-        } catch (err: any) {
-            setError(err.message || 'Failed to load assessments');
-        } finally {
-            setLoading(false);
+            return json;
+        },
+        {
+            revalidateFirstPage: false,
         }
-    }, []);
+    );
 
-    const loadMore = useCallback(async () => {
-        if (!nextCursor || loadingMore) return;
-        setLoadingMore(true);
-        try {
-            const result = await getAssessments(nextCursor);
-            if (result.error) {
-                setError(result.error.message);
-            } else {
-                setAssessments((prev) => [...prev, ...(result.data || [])]);
-                setHasMore(result.meta?.hasMore || false);
-                setNextCursor(result.meta?.nextCursor || null);
-            }
-        } catch (err: any) {
-            console.error('Failed to load more assessments:', err);
-        } finally {
-            setLoadingMore(false);
+    const assessments: AssessmentResponse[] = data
+        ? data.flatMap((page) => page.data || [])
+        : [];
+
+    const loading = isLoading && assessments.length === 0;
+    const loadingMore = isValidating && size > 1;
+    const errorMsg = error ? error.message : null;
+    const hasMore = data ? data[data.length - 1]?.meta?.hasMore : false;
+
+    const loadMore = () => {
+        if (hasMore && !isValidating) {
+            setSize(size + 1);
         }
-    }, [nextCursor, loadingMore]);
-
-    useEffect(() => {
-        loadInitial();
-    }, [loadInitial]);
+    };
 
     return {
         assessments,
         loading,
         loadingMore,
-        error,
+        error: errorMsg,
         hasMore,
         loadMore,
-        refetch: loadInitial
+        refetch: () => mutate()
     };
 }
