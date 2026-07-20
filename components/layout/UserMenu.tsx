@@ -37,7 +37,7 @@ export default function UserMenu({ firstName, lastName, email }: UserMenuProps) 
             } catch (err) {
                 // ignore
             }
-            router.push('/login');
+            window.location.href = '/login';
         });
     };
 

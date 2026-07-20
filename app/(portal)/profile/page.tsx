@@ -395,7 +395,7 @@ export default function ProfilePage() {
                             } catch (err) {
                                 // ignore
                             }
-                            router.push('/login');
+                            window.location.href = '/login';
                         }}
                         className="w-full sm:w-auto"
                     >
