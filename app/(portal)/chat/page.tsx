@@ -23,7 +23,7 @@ export default function ChatPage() {
     const messageListRef = useRef<HTMLDivElement>(null);
     const previousHeightRef = useRef<number>(0);
     const lastMessageIdRef = useRef<string | null>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
 
     const lastReadPatientMsgId = useMemo(() => {
         const lastReadMsg = [...messages].reverse().find(m => m.senderType === 'patient' && m.readAt);
@@ -69,12 +69,27 @@ export default function ChatPage() {
         }
     };
 
+    const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setInputText(e.target.value);
+
+        const target = e.target;
+        target.style.height = 'auto';
+        target.style.height = `${target.scrollHeight}px`;
+    };
+
     const handleSendMessage = async (e: React.FormEvent) => {
-        e.preventDefault();
+        if (e && e.preventDefault) {
+            e.preventDefault();
+        }
+
         const text = inputText.trim();
         if (!text || sending) return;
 
         setInputText('');
+
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+        }
 
         inputRef.current?.focus();
 
@@ -86,6 +101,14 @@ export default function ChatPage() {
         } catch (err) {
             // Error toast is handled inside useChat
             setInputText(text);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+
+            handleSendMessage(e as unknown as React.FormEvent);
         }
     };
 
@@ -140,7 +163,7 @@ export default function ChatPage() {
         return (
             <div className="flex flex-col items-center justify-center min-h-[50vh] space-y-4">
                 <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
-                <p className="text-gray-500 text-sm">Opening conversation thread...</p>
+                <p className="text-gray-500 text-sm">Opening conversation...</p>
             </div>
         );
     }
@@ -166,10 +189,17 @@ export default function ChatPage() {
     }
 
     return (
-        <div className="space-y-4">
-            <div className="max-w-4xl mx-auto flex flex-col h-[calc(100vh-10rem)] md:h-[calc(100vh-11rem)] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden animate-fade-in pb-12 sm:pb-0">
+        <div className="space-y-4 -mx-4 -mt-8 sm:mx-0 sm:mt-0">
+            <Link
+                href="/dashboard"
+                className="flex hidden sm:flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors"
+            >
+                <ArrowLeft className="w-4 h-4" />
+                Back to dashboard
+            </Link>
+            <div className="max-w-4xl mx-auto flex flex-col h-[calc(100dvh-8rem)] sm:h-[calc(100vh-10rem)] md:h-[calc(100vh-11rem)] bg-white dark:bg-slate-900 rounded-none sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 shadow-none sm:shadow-sm overflow-hidden animate-fade-in">
                 {/* Header Area */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-150 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+                <div className="relative z-10 flex items-center justify-between px-6 py-4 border-b border-slate-150 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 shadow-md">
                     <div className="flex items-center gap-3">
                         <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold shadow-sm">
                             AKC
@@ -202,7 +232,7 @@ export default function ChatPage() {
                             <div className="max-w-sm space-y-1">
                                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">Start the conversation</h3>
                                 <p className="text-xs text-slate-500 leading-relaxed font-normal">
-                                    Have a question about your BORIS results? Send us a message and our team will get back to you.
+                                    Have a question about your KRPS results? Send us a message and our team will get back to you.
                                 </p>
                             </div>
                         </div>
@@ -232,7 +262,7 @@ export default function ChatPage() {
                                         nextMsg.senderType !== msg.senderType ||
                                         (new Date(nextMsg.sentAt).getTime() - new Date(msg.sentAt).getTime() > FIVE_MINUTES);
 
-                                    const isAbsoluteLastMsg = msg.id === messages[messages.length - 1].id && msg.senderType === 'patient';
+                                    const isAbsoluteLastMsg = msg.id === messages[messages.length - 1].id && isPatient;
                                     const isLastReadMsg = msg.id === lastReadPatientMsgId;
                                     const showStatusBlock = isAbsoluteLastMsg || (isPatient && isLastReadMsg);
 
@@ -277,14 +307,14 @@ export default function ChatPage() {
                                                 )}
 
                                                 {/* Message text bubble wrapper */}
-                                                <div className={`relative group flex items-center w-fit ${isPatient ? 'ml-auto' : 'mr-auto'}`}>
+                                                <div className={`relative group flex items-center w-fit max-w-full ${isPatient ? 'ml-auto' : 'mr-auto'}`}>
                                                     <div
-                                                        className={`px-4.5 py-2.5 text-base leading-relaxed ${isPatient
+                                                        className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full ${isPatient
                                                             ? `bg-primary text-white shadow-xs ${bubbleShapeClass}`
-                                                            : `bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs ${bubbleShapeClass}`
+                                                            : `bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs ${bubbleShapeClass}`
                                                             }`}
                                                     >
-                                                        <p className="whitespace-pre-wrap break-words text-left">{msg.body}</p>
+                                                        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{msg.body}</p>
                                                     </div>
                                                     <span
                                                         className={`absolute ${isPatient ? 'right-full mr-3' : 'left-full ml-3'
@@ -327,14 +357,15 @@ export default function ChatPage() {
                     onSubmit={handleSendMessage}
                     className="p-4 border-t border-slate-150 dark:border-slate-850 bg-white dark:bg-slate-900 shrink-0"
                 >
-                    <div className="flex items-center gap-3">
-                        <input
+                    <div className="flex items-end gap-3">
+                        <textarea
                             ref={inputRef}
-                            type="text"
                             value={inputText}
-                            onChange={(e) => setInputText(e.target.value)}
+                            onChange={handleTextChange}
                             placeholder="Type a message..."
-                            className="flex-1 h-11 px-4 py-2 bg-slate-50 hover:bg-slate-100/60 dark:bg-slate-800/50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white dark:focus:bg-slate-800 text-sm text-slate-900 dark:text-white transition-all disabled:opacity-50"
+                            onKeyDown={handleKeyDown}
+                            rows={1}
+                            className="flex-1 resize-none overflow-y-auto max-h-[250px] min-h-[44px] px-4 py-2 bg-slate-50 hover:bg-slate-100/60 dark:bg-slate-800/50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white dark:focus:bg-slate-800 text-sm text-slate-900 dark:text-white transition-all disabled:opacity-50"
                         />
                         <button
                             type="submit"

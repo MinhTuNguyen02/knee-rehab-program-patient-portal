@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import Header from '@/components/layout/Header';
+import MobileBottomNav from '@/components/layout/MobileBottomNav';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -52,21 +53,7 @@ export default async function PortalLayout({ children }: { children: React.React
                 {children}
             </main>
 
-            {/* Simple Mobile Bottom Nav */}
-            <div className="sm:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex justify-around items-center z-40 pb-safe">
-                <Link href="/dashboard" className="p-2 text-sm font-medium flex flex-col items-center gap-1 text-gray-600 hover:text-primary">
-                    Dashboard
-                </Link>
-                <Link href="/history" className="p-2 text-sm font-medium flex flex-col items-center gap-1 text-gray-600 hover:text-primary">
-                    History
-                </Link>
-                <Link href="/chat" className="p-2 text-sm font-medium flex flex-col items-center gap-1 text-gray-600 hover:text-primary">
-                    Chat
-                </Link>
-                <Link href="/profile" className="p-2 text-sm font-medium flex flex-col items-center gap-1 text-gray-600 hover:text-primary">
-                    Profile
-                </Link>
-            </div>
+            <MobileBottomNav />
         </div>
     );
 }
