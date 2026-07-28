@@ -74,22 +74,31 @@ export function formatRelativeTime(dateStr: string | Date): string {
 }
 
 // Chat Groups Date
-export function formatChatGroupDate(dateStr: string | Date): string {
-  if (!dateStr) return "";
+// 1. Date Divider
+export const formatDateDivider = (dateStr: string): string => {
   const date = new Date(dateStr);
   const now = new Date();
-  const diffDays = getDaysDiff(date, now);
 
-  if (diffDays === 0) {
-    return "Today";
-  }
+  if (date.toDateString() === now.toDateString()) return 'Today';
 
-  if (diffDays === 1) {
-    return "Yesterday";
-  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
 
-  return date.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
+  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (24 * 60 * 60 * 1000));
+  if (diffDays < 7) options.weekday = 'short';
+  if (date.getFullYear() !== now.getFullYear()) options.year = 'numeric';
+
+  return date.toLocaleDateString('en-US', options);
+};
+
+// 2. Message Bubble
+export const formatBubbleTime = (dateStr: string): string => {
+  return new Date(dateStr).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
   });
-}
+};

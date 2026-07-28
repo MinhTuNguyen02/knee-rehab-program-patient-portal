@@ -3,10 +3,20 @@
 import { useState, useRef, useEffect, UIEvent, useMemo } from 'react';
 import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft } from 'lucide-react';
 import { useChat, ChatMessage } from '@/hooks/useChat';
+import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
+import { formatBubbleTime, formatDateDivider } from '@/lib/utils';
 
 export default function ChatPage() {
+    return (
+        <SocketProvider>
+            <ChatPageInner />
+        </SocketProvider>
+    );
+}
+
+function ChatPageInner() {
     const {
         conversation,
         messages,
@@ -15,6 +25,11 @@ export default function ChatPage() {
         hasMore,
         sending,
         error,
+        isConnected,
+        isReconnecting,
+        isClinicTyping,
+        isClinicOnline,
+        emitTyping,
         sendMessage,
         loadMore
     } = useChat();
@@ -24,6 +39,8 @@ export default function ChatPage() {
     const previousHeightRef = useRef<number>(0);
     const lastMessageIdRef = useRef<string | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+
+    const [activeTimeMsgId, setActiveTimeMsgId] = useState<string | null>(null);
 
     const lastReadPatientMsgId = useMemo(() => {
         const lastReadMsg = [...messages].reverse().find(m => m.senderType === 'patient' && m.readAt);
@@ -71,6 +88,7 @@ export default function ChatPage() {
 
     const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInputText(e.target.value);
+        emitTyping();
 
         const target = e.target;
         target.style.height = 'auto';
@@ -117,7 +135,7 @@ export default function ChatPage() {
         const groups: { [key: string]: ChatMessage[] } = {};
 
         msgs.forEach(msg => {
-            const dateKey = formatGroupDate(msg.sentAt);
+            const dateKey = formatDateDivider(msg.sentAt);
             if (!groups[dateKey]) {
                 groups[dateKey] = [];
             }
@@ -125,31 +143,6 @@ export default function ChatPage() {
         });
 
         return Object.entries(groups);
-    };
-
-    const formatGroupDate = (dateStr: string) => {
-        const d = new Date(dateStr);
-        const today = new Date();
-        const yesterday = new Date();
-        yesterday.setDate(today.getDate() - 1);
-
-        if (d.toDateString() === today.toDateString()) {
-            return 'Today';
-        }
-        if (d.toDateString() === yesterday.toDateString()) {
-            return 'Yesterday';
-        }
-
-        const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
-        if (d.getFullYear() !== today.getFullYear()) {
-            options.year = 'numeric';
-        }
-        return d.toLocaleDateString('en-US', options);
-    };
-
-    const formatTime = (dateStr: string) => {
-        const d = new Date(dateStr);
-        return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
     };
 
     // Toast error notifications on state changes
@@ -199,17 +192,26 @@ export default function ChatPage() {
             </Link>
             <div className="max-w-4xl mx-auto flex flex-col h-[calc(100dvh-8rem)] sm:h-[calc(100vh-10rem)] md:h-[calc(100vh-11rem)] bg-white dark:bg-slate-900 rounded-none sm:rounded-2xl border-0 sm:border border-slate-200 dark:border-slate-800 shadow-none sm:shadow-sm overflow-hidden animate-fade-in">
                 {/* Header Area */}
-                <div className="relative z-10 flex items-center justify-between px-6 py-4 border-b border-slate-150 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 shadow-md">
-                    <div className="flex items-center gap-3">
-                        <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold shadow-sm">
-                            AKC
-                            <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-amber-400 border-2 border-white dark:border-slate-900" />
-                        </div>
-                        <div>
-                            <h1 className="text-base font-bold text-slate-900 dark:text-white leading-tight">Adelaide Knee Clinic</h1>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Typically replies within 1 business day</p>
+                <div className="relative z-10 flex flex-col shrink-0 shadow-md">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-150 dark:border-slate-800 bg-white dark:bg-slate-900">
+                        <div className="flex items-center gap-3">
+                            <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold shadow-sm">
+                                AKC
+                                <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 ${isClinicOnline ? 'bg-green-500' : 'bg-amber-400'}`} />
+                            </div>
+                            <div>
+                                <h1 className="text-base font-bold text-slate-900 dark:text-white leading-tight">Adelaide Knee Clinic</h1>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">{isClinicOnline ? 'Online' : 'Typically replies within 1 business day'}</p>
+                            </div>
                         </div>
                     </div>
+                    {/* Reconnection Banner */}
+                    {isReconnecting && (
+                        <div className="bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center justify-center gap-2">
+                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-600 dark:border-amber-500"></div>
+                            <span className="text-xs font-medium text-amber-700 dark:text-amber-500">Reconnecting...</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Chat Body Scroll Container */}
@@ -241,7 +243,7 @@ export default function ChatPage() {
                             <div key={dayKey} className="flex flex-col">
                                 {/* Date Separator Header */}
                                 <div className="flex justify-center mt-6 mb-4">
-                                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-100 dark:border-slate-800/80 shadow-2xs uppercase tracking-wider">
+                                    <span className="text-[10px] font-bold text-slate-440 dark:text-slate-500 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-100 dark:border-slate-800/80 shadow-2xs uppercase tracking-wider">
                                         {dayKey}
                                     </span>
                                 </div>
@@ -307,7 +309,10 @@ export default function ChatPage() {
                                                 )}
 
                                                 {/* Message text bubble wrapper */}
-                                                <div className={`relative group flex items-center w-fit max-w-full ${isPatient ? 'ml-auto' : 'mr-auto'}`}>
+                                                <div
+                                                    className={`relative group flex items-center w-fit max-w-full cursor-pointer sm:cursor-auto ${isPatient ? 'ml-auto' : 'mr-auto'}`}
+                                                    onClick={() => setActiveTimeMsgId(prev => prev === msg.id ? null : msg.id)}
+                                                >
                                                     <div
                                                         className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full ${isPatient
                                                             ? `bg-primary text-white shadow-xs ${bubbleShapeClass}`
@@ -317,10 +322,12 @@ export default function ChatPage() {
                                                         <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{msg.body}</p>
                                                     </div>
                                                     <span
-                                                        className={`absolute ${isPatient ? 'right-full mr-3' : 'left-full ml-3'
-                                                            } opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none cursor-default top-1/2 -translate-y-1/2`}
+                                                        className={`absolute ${isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
+                                                            transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none top-1/2 -translate-y-1/2
+                                                            ${activeTimeMsgId === msg.id ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'} 
+                                                        `}
                                                     >
-                                                        {formatTime(msg.sentAt)}
+                                                        {formatBubbleTime(msg.sentAt)}
                                                     </span>
                                                 </div>
 
@@ -328,7 +335,7 @@ export default function ChatPage() {
                                                 {showStatusBlock && (
                                                     <div className="flex items-center gap-1 mt-1 px-1 justify-end">
                                                         <span className="text-xs text-slate-400 dark:text-slate-500">
-                                                            {formatTime(msg.sentAt)}
+                                                            {formatBubbleTime(msg.sentAt)}
                                                         </span>
 
                                                         {/* Single/double tick read receipt for Patient Messages */}
@@ -352,6 +359,18 @@ export default function ChatPage() {
                     )}
                 </div>
 
+                {/* Typing Indicator */}
+                {isClinicTyping && (
+                    <div className="px-6 py-2 bg-slate-50/50 dark:bg-slate-900/30 flex items-center gap-2">
+                        <span className="text-xs text-slate-500 italic">Clinic is typing</span>
+                        <div className="flex gap-1">
+                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Message Input Form */}
                 <form
                     onSubmit={handleSendMessage}
@@ -362,14 +381,15 @@ export default function ChatPage() {
                             ref={inputRef}
                             value={inputText}
                             onChange={handleTextChange}
-                            placeholder="Type a message..."
+                            disabled={isReconnecting}
+                            placeholder={isReconnecting ? "Reconnecting..." : "Type a message..."}
                             onKeyDown={handleKeyDown}
                             rows={1}
                             className="flex-1 resize-none overflow-y-auto max-h-[250px] min-h-[44px] px-4 py-2 bg-slate-50 hover:bg-slate-100/60 dark:bg-slate-800/50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white dark:focus:bg-slate-800 text-sm text-slate-900 dark:text-white transition-all disabled:opacity-50"
                         />
                         <button
                             type="submit"
-                            disabled={!inputText.trim() || sending}
+                            disabled={!inputText.trim() || sending || isReconnecting}
                             className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary hover:bg-primary-hover active:scale-[0.97] transition-all text-white disabled:opacity-30 disabled:pointer-events-none shadow-md shrink-0 shadow-primary/10"
                             aria-label="Send message"
                         >

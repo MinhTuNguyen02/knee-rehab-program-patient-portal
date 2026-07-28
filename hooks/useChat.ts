@@ -1,6 +1,7 @@
 import useSWR from 'swr';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import { useSocket } from './useSocket';
 
 export interface ChatMessage {
     id: string;
@@ -13,6 +14,8 @@ export interface ChatMessage {
 }
 
 export function useChat() {
+    const { socket, isConnected, isReconnecting } = useSocket();
+
     const { data: conversation, error: convError, isLoading: convLoading } = useSWR(
         '/api/patient/chat/conversation',
         async (url) => {
@@ -29,14 +32,18 @@ export function useChat() {
     );
 
     const latestSentAtRef = useRef<string | null>(null);
-
+    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [loadingMessages, setLoadingMessages] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(false);
     const [sending, setSending] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const [isClinicTyping, setIsClinicTyping] = useState(false);
+    const [pendingMessages, setPendingMessages] = useState<{ id: string, body: string }[]>([]);
+    const offlineTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const [isClinicOnline, setIsClinicOnline] = useState(false);
 
     useEffect(() => {
         if (messages.length > 0) {
@@ -61,7 +68,7 @@ export function useChat() {
                 }
 
                 const fetchedMessages = data.data || [];
-                setMessages(fetchedMessages.reverse());
+                setMessages([...fetchedMessages].reverse());
 
                 setHasMore(data.meta?.hasMore || false);
                 await markAsRead();
@@ -75,9 +82,96 @@ export function useChat() {
         loadInitialMessages();
     }, [conversation]);
 
-    // Polling new messages
+    // WebSocket event listeners
     useEffect(() => {
-        if (!conversation) return;
+        if (!socket || !conversation) return;
+
+        const handleMessageReceive = (message: ChatMessage) => {
+            setMessages(prev => {
+                const existingIds = new Set(prev.map(m => m.id));
+                if (existingIds.has(message.id)) return prev;
+                return [...prev, message];
+            });
+            // Auto mark as read
+            socket.emit('message:read', { conversationId: conversation.id });
+        };
+
+        const handleMessageRead = (data: { conversationId: string, readBy: string }) => {
+            if (data.readBy === 'staff') {
+                setMessages(prev => prev.map(m => m.readAt ? m : { ...m, readAt: new Date().toISOString() }));
+            }
+        };
+
+        const handleTypingStart = (data: { userType: string }) => {
+            if (data.userType === 'staff') setIsClinicTyping(true);
+        };
+
+        const handleTypingStop = (data: { userType: string }) => {
+            if (data.userType === 'staff') setIsClinicTyping(false);
+        };
+
+        const handleStaffStatus = (data: { isOnline: boolean }) => {
+            if (data.isOnline) {
+                if (offlineTimerRef.current) clearTimeout(offlineTimerRef.current);
+                setIsClinicOnline(true);
+            } else {
+                offlineTimerRef.current = setTimeout(() => {
+                    setIsClinicOnline(false);
+                }, 10000);
+            }
+        };
+
+        socket.on('message:receive', handleMessageReceive);
+        socket.on('message:read', handleMessageRead);
+        socket.on('typing:start', handleTypingStart);
+        socket.on('typing:stop', handleTypingStop);
+        socket.on('staff:status', handleStaffStatus);
+
+        return () => {
+            socket.off('message:receive', handleMessageReceive);
+            socket.off('message:read', handleMessageRead);
+            socket.off('typing:start', handleTypingStart);
+            socket.off('typing:stop', handleTypingStop);
+            socket.off('staff:status', handleStaffStatus);
+        };
+    }, [socket, conversation]);
+
+    // Handle sending pending messages on reconnect
+    useEffect(() => {
+        if (isConnected && socket && conversation && pendingMessages.length > 0) {
+            const sendPending = async () => {
+                const msgsToProcess = [...pendingMessages];
+                setPendingMessages([]); // Clear queue immediately to avoid double send
+
+                for (const pending of msgsToProcess) {
+                    try {
+                        const newMessage: ChatMessage = await new Promise((resolve, reject) => {
+                            socket.emit('message:send', { conversationId: conversation.id, body: pending.body }, (response: any) => {
+                                if (response?.id) resolve(response);
+                                else reject(new Error('No response'));
+                            });
+                        });
+                        setMessages(prev => prev.map(m => m.id === pending.id ? newMessage : m));
+                    } catch (e) {
+                        // If it fails again, re-queue
+                        setPendingMessages(prev => [...prev, pending]);
+                    }
+                }
+            };
+            sendPending();
+        }
+    }, [isConnected, socket, conversation, pendingMessages]);
+
+
+    // Polling fallback when disconnected
+    useEffect(() => {
+        if (!conversation || isConnected) {
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current);
+                pollingIntervalRef.current = null;
+            }
+            return;
+        }
 
         const startPolling = () => {
             if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
@@ -95,7 +189,7 @@ export function useChat() {
                     if (newMessages.length > 0) {
                         setMessages(prev => {
                             const existingIds = new Set(prev.map(m => m.id));
-                            const uniqueNew = newMessages.filter(m => !existingIds.has(m.id));
+                            const uniqueNew = [...newMessages].reverse().filter(m => !existingIds.has(m.id));
                             if (uniqueNew.length === 0) return prev;
                             return [...prev, ...uniqueNew];
                         });
@@ -112,30 +206,83 @@ export function useChat() {
         return () => {
             if (pollingIntervalRef.current) {
                 clearInterval(pollingIntervalRef.current);
+                pollingIntervalRef.current = null;
             }
         };
-    }, [conversation]);
+    }, [conversation, isConnected]);
+
+    const markAsRead = async () => {
+        if (!conversation) return;
+        if (isConnected && socket) {
+            socket.emit('message:read', { conversationId: conversation.id });
+        } else {
+            try {
+                await fetch('/api/patient/chat/conversation', { method: 'PATCH' });
+            } catch (e) {
+                // Fail silently
+            }
+        }
+    };
+
+    const emitTyping = useCallback(() => {
+        if (!conversation || !isConnected || !socket) return;
+
+        socket.emit('typing:start', { conversationId: conversation.id });
+
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => {
+            socket.emit('typing:stop', { conversationId: conversation.id });
+        }, 3000);
+    }, [conversation, isConnected, socket]);
 
     const sendMessage = async (body: string) => {
-        if (!body.trim() || sending) return;
+        if (!body.trim() || sending || !conversation) return;
+
+        // Clear typing status
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        if (socket && isConnected) socket.emit('typing:stop', { conversationId: conversation.id });
+
         setSending(true);
         try {
-            const res = await fetch('/api/patient/chat/messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ body: body.trim() }),
-            });
+            if (isConnected && socket) {
+                // Real-time send
+                const newMessage: ChatMessage = await new Promise((resolve, reject) => {
+                    socket.emit('message:send', { conversationId: conversation.id, body: body.trim() }, (response: any) => {
+                        if (response?.id) resolve(response);
+                        else reject(new Error('Failed to send message via socket'));
+                    });
+                });
+                setMessages(prev => [...prev, newMessage]);
+            } else {
+                // Fallback / Offline queue
+                try {
+                    const res = await fetch('/api/patient/chat/messages', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ body: body.trim() }),
+                    });
 
-            const responseJson = await res.json();
+                    const responseJson = await res.json();
+                    if (!res.ok) throw new Error(responseJson.error?.message || 'Failed to send message');
 
-            if (!res.ok) {
-                throw new Error(responseJson.error?.message || 'Failed to send message');
+                    setMessages(prev => [...prev, responseJson.data]);
+                } catch (e) {
+                    // Queue for offline
+                    const tempId = `temp-${Date.now()}`;
+                    const optimisticMessage: ChatMessage = {
+                        id: tempId,
+                        conversationId: conversation.id,
+                        senderType: 'patient',
+                        senderId: 'optimistic',
+                        body: body.trim(),
+                        sentAt: new Date().toISOString(),
+                        readAt: null
+                    };
+
+                    setMessages(prev => [...prev, optimisticMessage]);
+                    setPendingMessages(prev => [...prev, { id: tempId, body: body.trim() }]);
+                }
             }
-
-            const newMessage = responseJson.data;
-
-            setMessages(prev => [...prev, newMessage]);
-            return newMessage;
         } catch (err: any) {
             toast.error(err.message || 'Failed to send message');
             throw err;
@@ -161,7 +308,7 @@ export function useChat() {
             if (olderMessages.length > 0) {
                 setMessages(prev => {
                     const existingIds = new Set(prev.map(m => m.id));
-                    const uniqueOlder = olderMessages.reverse().filter(m => !existingIds.has(m.id));
+                    const uniqueOlder = [...olderMessages].reverse().filter(m => !existingIds.has(m.id));
                     return [...uniqueOlder, ...prev];
                 });
             }
@@ -173,14 +320,6 @@ export function useChat() {
         }
     };
 
-    const markAsRead = async () => {
-        try {
-            await fetch('/api/patient/chat/conversation/read', { method: 'PATCH' });
-        } catch (e) {
-            // Fail silently
-        }
-    };
-
     return {
         conversation,
         messages,
@@ -189,6 +328,11 @@ export function useChat() {
         hasMore,
         sending,
         error: convError ? convError.message : error,
+        isConnected,
+        isReconnecting,
+        isClinicTyping,
+        isClinicOnline,
+        emitTyping,
         sendMessage,
         loadMore,
         markAsRead,
