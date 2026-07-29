@@ -1,7 +1,8 @@
 import useSWR from 'swr';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getClientMessaging } from '@/lib/firebase';
 import { getToken, onMessage } from 'firebase/messaging';
+import useSWRInfinite from 'swr/infinite';
 
 export interface PatientNotification {
     id: string;
@@ -23,24 +24,38 @@ const fetcher = async (url: string) => {
     return json.data;
 };
 
+const infiniteFetcher = async (url: string) => {
+    const res = await fetch(url);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error?.message || 'Failed to fetch');
+    return json;
+};
+
 export function useNotifications() {
     const [isFcmActive, setIsFcmActive] = useState<boolean | null>(null);
+    const isChatOpenRef = useRef<boolean>(false);
+
+    const getKey = (pageIndex: number, previousPageData: any) => {
+        if (previousPageData && !previousPageData.meta?.hasMore) return null;
+        if (pageIndex === 0) return `/api/patient/notifications?limit=20`;
+
+        const lastItem = previousPageData.data[previousPageData.data.length - 1];
+        return `/api/patient/notifications?limit=20&before=${lastItem.createdAt}`;
+    };
 
     // Fetch notifications list using SWR
     // Automatically poll every 30 seconds ONLY if FCM is unavailable
     const {
-        data: notificationsData,
+        data: infiniteData,
         error: listError,
+        size,
+        setSize,
         isLoading: listLoading,
         mutate: mutateList,
-    } = useSWR<PatientNotification[]>(
-        '/api/patient/notifications',
-        fetcher,
-        {
-            refreshInterval: isFcmActive === false ? 30000 : 0,
-            revalidateOnFocus: true,
-        }
-    );
+    } = useSWRInfinite(getKey, infiniteFetcher, {
+        refreshInterval: isFcmActive === false ? 30000 : 0,
+        revalidateOnFocus: true,
+    });
 
     // Fetch unread count using SWR
     const {
@@ -56,6 +71,19 @@ export function useNotifications() {
             revalidateOnFocus: true,
         }
     );
+
+    const notificationsData = infiniteData ? infiniteData.flatMap(page => page.data) as PatientNotification[] : [];
+
+    // 🟢 Tính toán trạng thái pagination
+    const isLoadingMore = listLoading || (size > 0 && infiniteData && typeof infiniteData[size - 1] === "undefined");
+    const isEmpty = infiniteData?.[0]?.data?.length === 0;
+    const hasMore = isEmpty ? false : (infiniteData && infiniteData[infiniteData.length - 1]?.meta?.hasMore);
+
+    const loadMore = () => {
+        if (hasMore && !isLoadingMore) {
+            setSize(size + 1);
+        }
+    };
 
     // Trigger local mutation to refresh both list and count
     const refreshNotifications = () => {
@@ -106,6 +134,37 @@ export function useNotifications() {
             refreshNotifications();
         }
     };
+
+    useEffect(() => {
+        const handleChatOpened = () => {
+            isChatOpenRef.current = true;
+
+            if (notificationsData) {
+                const unreadIds = notificationsData
+                    .filter(n => !n.readAt && n.type === 'clinic_message')
+                    .map(n => n.id);
+
+                if (unreadIds.length > 0) {
+                    mutateList(prev => prev?.map(n => unreadIds.includes(n.id) ? { ...n, readAt: new Date().toISOString() } : n), false);
+                    mutateCount(prev => prev ? { count: Math.max(0, prev.count - unreadIds.length) } : prev, false);
+
+                    unreadIds.forEach(id => {
+                        fetch(`/api/patient/notifications/${id}/read`, { method: 'PATCH' }).catch(console.error);
+                    });
+                }
+            }
+        };
+
+        const handleChatClosed = () => { isChatOpenRef.current = false; };
+
+        window.addEventListener('chat_opened', handleChatOpened);
+        window.addEventListener('chat_closed', handleChatClosed);
+
+        return () => {
+            window.removeEventListener('chat_opened', handleChatOpened);
+            window.removeEventListener('chat_closed', handleChatClosed);
+        };
+    }, [notificationsData, mutateList, mutateCount]);
 
     // FCM Setup
     useEffect(() => {
@@ -160,9 +219,21 @@ export function useNotifications() {
                 }
 
                 // Attach real-time listener for foreground notifications
-                onMessage(messaging, (payload) => {
+                onMessage(messaging, async (payload) => {
                     console.log('Foreground FCM received:', payload);
-                    // Dynamically refresh SWR caching instantly
+
+                    const notifId = payload.data?.id;
+                    const notifType = payload.data?.type;
+
+                    if (isChatOpenRef.current && notifType === 'clinic_message') {
+                        if (notifId) {
+                            try {
+                                await fetch(`/api/patient/notifications/${notifId}/read`, { method: 'PATCH' });
+                                refreshNotifications();
+                            } catch (e) { console.error('Auto-read failed', e); }
+                        }
+                        return;
+                    }
                     refreshNotifications();
                 });
 
@@ -185,6 +256,9 @@ export function useNotifications() {
         notifications: notificationsData || [],
         unreadCount: countData?.count || 0,
         loading: listLoading || countLoading,
+        loadingMore: isLoadingMore,
+        hasMore,
+        loadMore,
         error: listError || countError,
         isFcmActive,
         markAsRead,

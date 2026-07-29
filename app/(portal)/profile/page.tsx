@@ -8,14 +8,14 @@ import { useForm, Controller } from 'react-hook-form';
 import 'react-phone-number-input/style.css';
 import toast from 'react-hot-toast';
 import { ArrowLeft, LogOut } from 'lucide-react';
-import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
-// import dynamic from 'next/dynamic';
-// import { isValidPhoneNumber } from 'react-phone-number-input/min';
+// import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
+import dynamic from 'next/dynamic';
+import { isValidPhoneNumber } from 'react-phone-number-input/min';
 
-// const PhoneInput = dynamic(() => import('react-phone-number-input'), {
-//     ssr: false,
-//     loading: () => <div className="h-11 w-full bg-gray-100 dark:bg-gray-800 animate-pulse rounded-xl" />
-// });
+const PhoneInput = dynamic(() => import('react-phone-number-input'), {
+    ssr: false,
+    loading: () => <div className="h-11 w-full bg-gray-100 dark:bg-gray-800 animate-pulse rounded-xl" />
+});
 
 export default function ProfilePage() {
     const { profile, loading, error: profileError, mutate } = usePatientProfile();

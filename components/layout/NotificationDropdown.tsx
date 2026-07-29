@@ -12,6 +12,9 @@ export default function NotificationDropdown() {
         unreadCount,
         isFcmActive,
         loading,
+        loadingMore,
+        hasMore,
+        loadMore,
         markAsRead,
         markAllAsRead,
         refresh
@@ -119,6 +122,15 @@ export default function NotificationDropdown() {
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [isOpen]);
 
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        const target = e.currentTarget;
+        if (target.scrollHeight - target.scrollTop <= target.clientHeight + 50) {
+            if (hasMore && !loadingMore) {
+                loadMore();
+            }
+        }
+    };
+
     const getNotificationIcon = (type: PatientNotification['type']) => {
         switch (type) {
             case 'clinic_message':
@@ -164,9 +176,8 @@ export default function NotificationDropdown() {
                         <span className="font-bold text-slate-950 dark:text-white text-base">Notifications</span>
                         <span
                             title={isFcmActive ? 'FCM Real-time Active' : 'Polling (FCM Unavailable)'}
-                            className={`h-2.5 w-2.5 rounded-full ${
-                                isFcmActive ? 'bg-emerald-500 animate-ping-once' : 'bg-amber-400'
-                            }`}
+                            className={`h-2.5 w-2.5 rounded-full ${isFcmActive ? 'bg-emerald-500 animate-ping-once' : 'bg-amber-400'
+                                }`}
                         />
                     </div>
                     <div className="flex items-center gap-3">
@@ -192,7 +203,10 @@ export default function NotificationDropdown() {
                 </div>
 
                 {/* Notification List Container */}
-                <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                <div
+                    className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800"
+                    onScroll={handleScroll}
+                >
                     {notifications.length === 0 ? (
                         <div className="py-12 px-4 text-center flex flex-col items-center justify-center text-slate-400 dark:text-slate-500">
                             <Bell className="w-8 h-8 mb-2 opacity-50" />
@@ -211,9 +225,8 @@ export default function NotificationDropdown() {
                                         handleNotificationClick(notification);
                                     }
                                 }}
-                                className={`p-4 flex gap-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${
-                                    !notification.readAt ? 'bg-primary/5 dark:bg-primary/10' : ''
-                                }`}
+                                className={`p-4 flex gap-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${!notification.readAt ? 'bg-primary/5 dark:bg-primary/10' : ''
+                                    }`}
                                 aria-label={`Notification: ${notification.title}. ${notification.body}. Date: ${formatDate(notification.createdAt)}. Status: ${notification.readAt ? 'Read' : 'Unread'}`}
                             >
                                 {getNotificationIcon(notification.type)}
@@ -234,6 +247,11 @@ export default function NotificationDropdown() {
                             </div>
                         ))
                     )}
+                    {loadingMore && (
+                        <div className="py-4 flex justify-center">
+                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
+                        </div>
+                    )}
                 </div>
             </div>
         </>,
@@ -246,9 +264,8 @@ export default function NotificationDropdown() {
             <button
                 ref={triggerRef}
                 onClick={() => setIsOpen(!isOpen)}
-                className={`relative p-2 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-all duration-200 focus:outline-none hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-primary ${
-                    isOpen ? 'bg-slate-100 dark:bg-slate-800 text-slate-950 dark:text-white' : ''
-                }`}
+                className={`relative p-2 rounded-xl text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-all duration-200 focus:outline-none hover:bg-slate-100 dark:hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-primary ${isOpen ? 'bg-slate-100 dark:bg-slate-800 text-slate-950 dark:text-white' : ''
+                    }`}
                 aria-expanded={isOpen}
                 aria-haspopup="dialog"
                 aria-label={`Notifications. ${unreadCount} unread notifications.`}
@@ -294,7 +311,10 @@ export default function NotificationDropdown() {
                     </div>
 
                     {/* Notification List */}
-                    <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                    <div
+                        className="max-h-96 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800"
+                        onScroll={handleScroll}
+                    >
                         {notifications.length === 0 ? (
                             <div className="py-12 px-4 text-center flex flex-col items-center justify-center text-slate-400 dark:text-slate-500">
                                 <Bell className="w-8 h-8 mb-2 opacity-50" />
@@ -313,9 +333,8 @@ export default function NotificationDropdown() {
                                             handleNotificationClick(notification);
                                         }
                                     }}
-                                    className={`p-4 flex gap-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${
-                                        !notification.readAt ? 'bg-primary/5 dark:bg-primary/10' : ''
-                                    }`}
+                                    className={`p-4 flex gap-3 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${!notification.readAt ? 'bg-primary/5 dark:bg-primary/10' : ''
+                                        }`}
                                     aria-label={`Notification: ${notification.title}. ${notification.body}. Date: ${formatDate(notification.createdAt)}. Status: ${notification.readAt ? 'Read' : 'Unread'}`}
                                 >
                                     {getNotificationIcon(notification.type)}
@@ -335,6 +354,11 @@ export default function NotificationDropdown() {
                                     </div>
                                 </div>
                             ))
+                        )}
+                        {loadingMore && (
+                            <div className="py-4 flex justify-center">
+                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
+                            </div>
                         )}
                     </div>
                 </div>

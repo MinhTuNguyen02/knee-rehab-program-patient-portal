@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, UIEvent, useMemo } from 'react';
-import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown } from 'lucide-react';
 import { useChat, ChatMessage } from '@/hooks/useChat';
 import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
@@ -42,10 +42,20 @@ function ChatPageInner() {
 
     const [activeTimeMsgId, setActiveTimeMsgId] = useState<string | null>(null);
 
+    const [showScrollButton, setShowScrollButton] = useState(false);
+
     const lastReadPatientMsgId = useMemo(() => {
         const lastReadMsg = [...messages].reverse().find(m => m.senderType === 'patient' && m.readAt);
         return lastReadMsg ? lastReadMsg.id : null;
     }, [messages]);
+
+    useEffect(() => {
+        window.dispatchEvent(new Event('chat_opened'));
+
+        return () => {
+            window.dispatchEvent(new Event('chat_closed'));
+        };
+    }, []);
 
     // Scroll to bottom on initial load and when new messages are added at the bottom
     useEffect(() => {
@@ -58,18 +68,31 @@ function ChatPageInner() {
 
             lastMessageIdRef.current = currentLastMsg.id;
         }
-    }, [messages, loading]);
+    }, [loading, messages]);
 
-    const scrollToBottom = () => {
+    const scrollToBottom = (smooth = false) => {
         if (messageListRef.current) {
-            messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+            if (smooth) {
+                messageListRef.current.scrollTo({
+                    top: messageListRef.current.scrollHeight,
+                    behavior: 'smooth'
+                })
+            } else {
+                messageListRef.current.scrollTop = messageListRef.current.scrollHeight
+            }
+
+            setShowScrollButton(false);
         }
     };
 
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
+        const target = e.currentTarget;
+
+        const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+        setShowScrollButton(distanceFromBottom > 50);
+
         if (loadingMore || !hasMore) return;
 
-        const target = e.currentTarget;
         if (target.scrollTop <= 1 && messages.length > 0) {
             // Save scroll height before loading more
             previousHeightRef.current = target.scrollHeight;
@@ -215,161 +238,181 @@ function ChatPageInner() {
                 </div>
 
                 {/* Chat Body Scroll Container */}
-                <div
-                    ref={messageListRef}
-                    onScroll={handleScroll}
-                    className="flex-1 overflow-y-auto px-6 py-4 bg-slate-50/50 dark:bg-slate-900/30"
-                >
-                    {loadingMore && (
-                        <div className="flex justify-center py-2">
-                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
-                        </div>
-                    )}
+                <div className="flex-1 relative min-h-0 flex flex-col bg-slate-50/50 dark:bg-slate-900/30">
 
-                    {messages.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-16 px-4 text-center space-y-4">
-                            <div className="p-4 bg-primary/5 rounded-full text-primary">
-                                <MessageSquare className="w-10 h-10 opacity-70" />
+                    <div
+                        ref={messageListRef}
+                        onScroll={handleScroll}
+                        className="flex-1 overflow-y-auto px-6 py-4 bg-slate-50/50 dark:bg-slate-900/30"
+                    >
+                        {loadingMore && (
+                            <div className="flex justify-center py-2">
+                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
                             </div>
-                            <div className="max-w-sm space-y-1">
-                                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Start the conversation</h3>
-                                <p className="text-xs text-slate-500 leading-relaxed font-normal">
-                                    Have a question about your KRPS results? Send us a message and our team will get back to you.
-                                </p>
-                            </div>
-                        </div>
-                    ) : (
-                        groupMessagesByDay(messages).map(([dayKey, dayMsgs]) => (
-                            <div key={dayKey} className="flex flex-col">
-                                {/* Date Separator Header */}
-                                <div className="flex justify-center mt-6 mb-4">
-                                    <span className="text-[10px] font-bold text-slate-440 dark:text-slate-500 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-100 dark:border-slate-800/80 shadow-2xs uppercase tracking-wider">
-                                        {dayKey}
-                                    </span>
+                        )}
+
+                        {messages.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-16 px-4 text-center space-y-4">
+                                <div className="p-4 bg-primary/5 rounded-full text-primary">
+                                    <MessageSquare className="w-10 h-10 opacity-70" />
                                 </div>
+                                <div className="max-w-sm space-y-1">
+                                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">Start the conversation</h3>
+                                    <p className="text-xs text-slate-500 leading-relaxed font-normal">
+                                        Have a question about your KRPS results? Send us a message and our team will get back to you.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            groupMessagesByDay(messages).map(([dayKey, dayMsgs]) => (
+                                <div key={dayKey} className="flex flex-col">
+                                    {/* Date Separator Header */}
+                                    <div className="flex justify-center mt-6 mb-4">
+                                        <span className="text-[10px] font-bold text-slate-440 dark:text-slate-500 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-100 dark:border-slate-800/80 shadow-2xs uppercase tracking-wider">
+                                            {dayKey}
+                                        </span>
+                                    </div>
 
-                                {dayMsgs.map((msg, index) => {
-                                    const isPatient = msg.senderType === 'patient';
-                                    const prevMsg = dayMsgs[index - 1];
-                                    const nextMsg = dayMsgs[index + 1];
+                                    {dayMsgs.map((msg, index) => {
+                                        const isPatient = msg.senderType === 'patient';
+                                        const prevMsg = dayMsgs[index - 1];
+                                        const nextMsg = dayMsgs[index + 1];
 
-                                    const FIVE_MINUTES = 5 * 60 * 1000;
+                                        const FIVE_MINUTES = 5 * 60 * 1000;
 
-                                    // Determine the position of the message
-                                    const isFirstInGroup = !prevMsg ||
-                                        prevMsg.senderType !== msg.senderType ||
-                                        (new Date(msg.sentAt).getTime() - new Date(prevMsg.sentAt).getTime() > FIVE_MINUTES);
+                                        // Determine the position of the message
+                                        const isFirstInGroup = !prevMsg ||
+                                            prevMsg.senderType !== msg.senderType ||
+                                            (new Date(msg.sentAt).getTime() - new Date(prevMsg.sentAt).getTime() > FIVE_MINUTES);
 
-                                    const isLastInGroup = !nextMsg ||
-                                        nextMsg.senderType !== msg.senderType ||
-                                        (new Date(nextMsg.sentAt).getTime() - new Date(msg.sentAt).getTime() > FIVE_MINUTES);
+                                        const isLastInGroup = !nextMsg ||
+                                            nextMsg.senderType !== msg.senderType ||
+                                            (new Date(nextMsg.sentAt).getTime() - new Date(msg.sentAt).getTime() > FIVE_MINUTES);
 
-                                    const isAbsoluteLastMsg = msg.id === messages[messages.length - 1].id && isPatient;
-                                    const isLastReadMsg = msg.id === lastReadPatientMsgId;
-                                    const showStatusBlock = isAbsoluteLastMsg || (isPatient && isLastReadMsg);
+                                        const isAbsoluteLastMsg = msg.id === messages[messages.length - 1].id && isPatient;
+                                        const isLastReadMsg = msg.id === lastReadPatientMsgId;
+                                        const showStatusBlock = isAbsoluteLastMsg || (isPatient && isLastReadMsg);
 
-                                    // Border Radius
-                                    let bubbleShapeClass = 'rounded-2xl';
-                                    if (isPatient) {
-                                        if (isFirstInGroup && isLastInGroup) {
-                                            bubbleShapeClass;
-                                        } else if (isFirstInGroup) {
-                                            bubbleShapeClass += ' rounded-br-xs';
-                                        } else if (isLastInGroup) {
-                                            bubbleShapeClass += ' rounded-tr-xs';
-                                        } else {
-                                            bubbleShapeClass += ' rounded-tr-xs rounded-br-xs';
+                                        // Border Radius
+                                        let bubbleShapeClass = 'rounded-2xl';
+                                        if (isPatient) {
+                                            if (isFirstInGroup && isLastInGroup) {
+                                                bubbleShapeClass;
+                                            } else if (isFirstInGroup) {
+                                                bubbleShapeClass += ' rounded-br-xs';
+                                            } else if (isLastInGroup) {
+                                                bubbleShapeClass += ' rounded-tr-xs';
+                                            } else {
+                                                bubbleShapeClass += ' rounded-tr-xs rounded-br-xs';
+                                            }
+                                        } else { // Staff
+                                            if (isFirstInGroup && isLastInGroup) {
+                                                bubbleShapeClass;
+                                            } else if (isFirstInGroup) {
+                                                bubbleShapeClass += ' rounded-bl-xs';
+                                            } else if (isLastInGroup) {
+                                                bubbleShapeClass += ' rounded-tl-xs';
+                                            } else {
+                                                bubbleShapeClass += ' rounded-tl-xs rounded-bl-xs';
+                                            }
                                         }
-                                    } else { // Staff
-                                        if (isFirstInGroup && isLastInGroup) {
-                                            bubbleShapeClass;
-                                        } else if (isFirstInGroup) {
-                                            bubbleShapeClass += ' rounded-bl-xs';
-                                        } else if (isLastInGroup) {
-                                            bubbleShapeClass += ' rounded-tl-xs';
-                                        } else {
-                                            bubbleShapeClass += ' rounded-tl-xs rounded-bl-xs';
-                                        }
-                                    }
 
-                                    // Space between messages
-                                    const marginTopClass = index === 0 ? '' : isFirstInGroup ? 'mt-6' : 'mt-1';
+                                        // Space between messages
+                                        const marginTopClass = index === 0 ? '' : isFirstInGroup ? 'mt-6' : 'mt-1';
 
-                                    return (
-                                        <div
-                                            key={msg.id}
-                                            className={`flex flex-col ${isPatient ? 'items-end' : 'items-start'} ${marginTopClass}`}
-                                        >
-                                            <div className="max-w-[80%] sm:max-w-[70%]">
-                                                {/* Staff Name Tag - Only appear in the first message of the cluster */}
-                                                {!isPatient && isFirstInGroup && (
-                                                    <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 ml-1.5 mb-1 block text-left">
-                                                        Clinic Staff
-                                                    </span>
-                                                )}
+                                        return (
+                                            <div
+                                                key={msg.id}
+                                                className={`flex flex-col ${isPatient ? 'items-end' : 'items-start'} ${marginTopClass}`}
+                                            >
+                                                <div className="max-w-[80%] sm:max-w-[70%]">
+                                                    {/* Staff Name Tag - Only appear in the first message of the cluster */}
+                                                    {!isPatient && isFirstInGroup && (
+                                                        <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 ml-1.5 mb-1 block text-left">
+                                                            Clinic Staff
+                                                        </span>
+                                                    )}
 
-                                                {/* Message text bubble wrapper */}
-                                                <div
-                                                    className={`relative group flex items-center w-fit max-w-full cursor-pointer sm:cursor-auto ${isPatient ? 'ml-auto' : 'mr-auto'}`}
-                                                    onClick={() => setActiveTimeMsgId(prev => prev === msg.id ? null : msg.id)}
-                                                >
+                                                    {/* Message text bubble wrapper */}
                                                     <div
-                                                        className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full ${isPatient
-                                                            ? `bg-primary text-white shadow-xs ${bubbleShapeClass}`
-                                                            : `bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs ${bubbleShapeClass}`
-                                                            }`}
+                                                        className={`relative group flex items-center w-fit max-w-full cursor-pointer sm:cursor-auto ${isPatient ? 'ml-auto' : 'mr-auto'}`}
+                                                        onClick={() => setActiveTimeMsgId(prev => prev === msg.id ? null : msg.id)}
                                                     >
-                                                        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{msg.body}</p>
-                                                    </div>
-                                                    <span
-                                                        className={`absolute ${isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
+                                                        <div
+                                                            className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full ${isPatient
+                                                                ? `bg-primary text-white shadow-xs ${bubbleShapeClass}`
+                                                                : `bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs ${bubbleShapeClass}`
+                                                                }`}
+                                                        >
+                                                            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{msg.body}</p>
+                                                        </div>
+                                                        <span
+                                                            className={`absolute ${isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
                                                             transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none top-1/2 -translate-y-1/2
                                                             ${activeTimeMsgId === msg.id ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'} 
                                                         `}
-                                                    >
-                                                        {formatBubbleTime(msg.sentAt)}
-                                                    </span>
-                                                </div>
-
-                                                {/* Timestamp - Only appear in the last message of the cluster */}
-                                                {showStatusBlock && (
-                                                    <div className="flex items-center gap-1 mt-1 px-1 justify-end">
-                                                        <span className="text-xs text-slate-400 dark:text-slate-500">
+                                                        >
                                                             {formatBubbleTime(msg.sentAt)}
                                                         </span>
-
-                                                        {/* Single/double tick read receipt for Patient Messages */}
-                                                        {isPatient && (
-                                                            <span title={msg.readAt ? 'Seen' : 'Sent'} className="text-primary dark:text-primary-light">
-                                                                {msg.readAt ? (
-                                                                    <CheckCheck className="w-3.5 h-3.5" />
-                                                                ) : (
-                                                                    <Check className="w-3.5 h-3.5 text-slate-350" />
-                                                                )}
-                                                            </span>
-                                                        )}
                                                     </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ))
-                    )}
-                </div>
 
-                {/* Typing Indicator */}
-                {isClinicTyping && (
-                    <div className="px-6 py-2 bg-slate-50/50 dark:bg-slate-900/30 flex items-center gap-2">
-                        <span className="text-xs text-slate-500 italic">Clinic is typing</span>
-                        <div className="flex gap-1">
-                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                            <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></span>
-                        </div>
+                                                    {/* Timestamp - Only appear in the last message of the cluster */}
+                                                    {showStatusBlock && (
+                                                        <div className="flex items-center gap-1 mt-1 px-1 justify-end">
+                                                            <span className="text-xs text-slate-400 dark:text-slate-500">
+                                                                {formatBubbleTime(msg.sentAt)}
+                                                            </span>
+
+                                                            {/* Single/double tick read receipt for Patient Messages */}
+                                                            {isPatient && (
+                                                                <span title={msg.readAt ? 'Seen' : 'Sent'} className="text-primary dark:text-primary-light">
+                                                                    {msg.readAt ? (
+                                                                        <CheckCheck className="w-3.5 h-3.5" />
+                                                                    ) : (
+                                                                        <Check className="w-3.5 h-3.5 text-slate-350" />
+                                                                    )}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ))
+                        )}
                     </div>
-                )}
+
+                    {/* Typing Indicator */}
+                    {(isClinicTyping && !showScrollButton) && (
+                        <div className="px-6 py-2 bg-slate-50/50 dark:bg-slate-900/30 flex items-center gap-2">
+                            <span className="text-xs text-slate-500 italic">Clinic is typing</span>
+                            <div className="flex gap-1">
+                                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></span>
+                            </div>
+                        </div>
+                    )}
+
+                    <button
+                        onClick={() => scrollToBottom(true)}
+                        className={`absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center justify-center w-9 h-9 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-md rounded-full text-slate-500 hover:text-primary transition-all duration-300 z-20 ${showScrollButton
+                            ? 'opacity-100 translate-y-0'
+                            : 'opacity-0 translate-y-4 pointer-events-none'
+                            }`}
+                        aria-label="Scroll to bottom"
+                    >
+                        {isClinicTyping ? (
+                            <div className="flex gap-1">
+                                <span className="w-1 h-1 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                                <span className="w-1 h-1 bg-slate-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                                <span className="w-1 h-1 bg-slate-400 rounded-full animate-bounce"></span>
+                            </div>) : <ChevronDown className="w-5 h-5" />}
+
+                    </button>
+                </div>
 
                 {/* Message Input Form */}
                 <form

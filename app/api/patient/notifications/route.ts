@@ -35,8 +35,14 @@ async function fetchFromBE(url: string, method: string, body?: any) {
     }
 }
 
-export async function GET() {
-    const { status, data, error } = await fetchFromBE('/patient-notifications', 'GET');
+export async function GET(request: Request) {
+    const { searchParams } = new URL(request.url);
+    const limit = searchParams.get('limit') || '20';
+    const before = searchParams.get('before') || '';
+
+    const queryString = new URLSearchParams({ limit, ...(before && { before }) }).toString();
+
+    const { status, data, error } = await fetchFromBE(`/patient-notifications?${queryString}`, 'GET');
     if (error) {
         return NextResponse.json({ error }, { status });
     }
