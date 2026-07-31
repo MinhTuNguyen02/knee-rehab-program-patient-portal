@@ -7,6 +7,19 @@ import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 import { formatBubbleTime, formatDateDivider } from '@/lib/utils';
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+type ChatItem =
+    | { type: 'date'; id: string; dateStr: string }
+    | {
+        type: 'message';
+        id: string;
+        message: ChatMessage;
+        isPatient: boolean;
+        isFirstInGroup: boolean;
+        isLastInGroup: boolean;
+        showStatusBlock: boolean;
+    };
 
 export default function ChatPage() {
     return (
@@ -35,13 +48,13 @@ function ChatPageInner() {
     } = useChat();
 
     const [inputText, setInputText] = useState('');
-    const messageListRef = useRef<HTMLDivElement>(null);
+
+    const parentRef = useRef<HTMLDivElement>(null);
     const previousHeightRef = useRef<number>(0);
     const lastMessageIdRef = useRef<string | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
     const [activeTimeMsgId, setActiveTimeMsgId] = useState<string | null>(null);
-
     const [showScrollButton, setShowScrollButton] = useState(false);
 
     const lastReadPatientMsgId = useMemo(() => {
@@ -57,55 +70,101 @@ function ChatPageInner() {
         };
     }, []);
 
-    // Scroll to bottom on initial load and when new messages are added at the bottom
-    useEffect(() => {
-        if (!loading && messages.length > 0) {
-            const currentLastMsg = messages[messages.length - 1];
+    // Flatten data Virtualizer
+    const flatItems = useMemo(() => {
+        const items: ChatItem[] = [];
+        let currentDateKey: string | null = null;
 
-            if (lastMessageIdRef.current !== currentLastMsg.id) {
-                setTimeout(scrollToBottom, 50);
+        messages.forEach((msg, index) => {
+            const dateKey = formatDateDivider(msg.sentAt);
+
+            if (dateKey !== currentDateKey) {
+                items.push({ type: 'date', id: `date-${dateKey}`, dateStr: dateKey });
+                currentDateKey = dateKey;
             }
 
-            lastMessageIdRef.current = currentLastMsg.id;
-        }
-    }, [loading, messages]);
+            const prevMsg = messages[index - 1];
+            const nextMsg = messages[index + 1];
+            const FIVE_MINUTES = 5 * 60 * 1000;
+
+            const isPatient = msg.senderType === 'patient';
+
+            const isFirstInGroup = !prevMsg ||
+                prevMsg.senderType !== msg.senderType ||
+                (new Date(msg.sentAt).getTime() - new Date(prevMsg.sentAt).getTime() > FIVE_MINUTES) ||
+                formatDateDivider(prevMsg.sentAt) !== dateKey;
+
+            const isLastInGroup = !nextMsg ||
+                nextMsg.senderType !== msg.senderType ||
+                (new Date(nextMsg.sentAt).getTime() - new Date(msg.sentAt).getTime() > FIVE_MINUTES) ||
+                formatDateDivider(nextMsg.sentAt) !== dateKey;
+
+            const isAbsoluteLastMsg = index === messages.length - 1 && isPatient;
+            const isLastReadMsg = msg.id === lastReadPatientMsgId;
+            const showStatusBlock = isAbsoluteLastMsg || (isPatient && isLastReadMsg);
+
+            items.push({
+                type: 'message',
+                id: msg.id,
+                message: msg,
+                isPatient,
+                isFirstInGroup,
+                isLastInGroup,
+                showStatusBlock
+            });
+        });
+
+        return items;
+    }, [messages, lastReadPatientMsgId]);
+
+    // Virtualizer
+    const virtualizer = useVirtualizer({
+        count: flatItems.length,
+        getScrollElement: () => parentRef.current,
+        estimateSize: () => 80, // Chiều cao ước tính
+        overscan: 10,
+    });
 
     const scrollToBottom = (smooth = false) => {
-        if (messageListRef.current) {
-            if (smooth) {
-                messageListRef.current.scrollTo({
-                    top: messageListRef.current.scrollHeight,
-                    behavior: 'smooth'
-                })
-            } else {
-                messageListRef.current.scrollTop = messageListRef.current.scrollHeight
-            }
-
+        if (flatItems.length > 0) {
+            virtualizer.scrollToIndex(flatItems.length - 1, {
+                align: 'end',
+                behavior: smooth ? 'smooth' : 'auto'
+            });
             setShowScrollButton(false);
         }
     };
 
+    const lastItemId = flatItems.length > 0 ? flatItems[flatItems.length - 1].id : null;
+
+    useEffect(() => {
+        if (!loading && lastItemId) {
+            if (lastMessageIdRef.current !== lastItemId) {
+                requestAnimationFrame(() => scrollToBottom());
+                lastMessageIdRef.current = lastItemId;
+            }
+        }
+    }, [loading, lastItemId]);
+
+    // Load More
     const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
         const target = e.currentTarget;
-
         const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+
         setShowScrollButton(distanceFromBottom > 50);
 
         if (loadingMore || !hasMore) return;
 
-        if (target.scrollTop <= 1 && messages.length > 0) {
-            // Save scroll height before loading more
+        if (target.scrollTop <= 1 && flatItems.length > 0) {
             previousHeightRef.current = target.scrollHeight;
-
             await loadMore();
 
-            // Lock scroll position to prevent jumping
             setTimeout(() => {
-                if (messageListRef.current) {
-                    const newHeight = messageListRef.current.scrollHeight;
-                    messageListRef.current.scrollTop = newHeight - previousHeightRef.current;
+                if (parentRef.current) {
+                    const newHeight = parentRef.current.scrollHeight;
+                    parentRef.current.scrollTop = newHeight - previousHeightRef.current;
                 }
-            }, 100);
+            }, 0);
         }
     };
 
@@ -119,9 +178,7 @@ function ChatPageInner() {
     };
 
     const handleSendMessage = async (e: React.FormEvent) => {
-        if (e && e.preventDefault) {
-            e.preventDefault();
-        }
+        if (e && e.preventDefault) e.preventDefault();
 
         const text = inputText.trim();
         if (!text || sending) return;
@@ -131,16 +188,13 @@ function ChatPageInner() {
         if (inputRef.current) {
             inputRef.current.style.height = 'auto';
         }
-
         inputRef.current?.focus();
-
-        setTimeout(scrollToBottom, 10);
+        scrollToBottom();
 
         try {
             await sendMessage(text);
-            setTimeout(scrollToBottom, 50);
+            scrollToBottom();
         } catch (err) {
-            // Error toast is handled inside useChat
             setInputText(text);
         }
     };
@@ -148,27 +202,14 @@ function ChatPageInner() {
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-
             handleSendMessage(e as unknown as React.FormEvent);
         }
     };
 
-    // Group messages by friendly day dates
-    const groupMessagesByDay = (msgs: ChatMessage[]) => {
-        const groups: { [key: string]: ChatMessage[] } = {};
+    useEffect(() => {
+        if (isClinicTyping && !showScrollButton) scrollToBottom(true);
+    }, [isClinicTyping]);
 
-        msgs.forEach(msg => {
-            const dateKey = formatDateDivider(msg.sentAt);
-            if (!groups[dateKey]) {
-                groups[dateKey] = [];
-            }
-            groups[dateKey].push(msg);
-        });
-
-        return Object.entries(groups);
-    };
-
-    // Toast error notifications on state changes
     useEffect(() => {
         if (error) {
             toast.error(error);
@@ -220,7 +261,8 @@ function ChatPageInner() {
                         <div className="flex items-center gap-3">
                             <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold shadow-sm">
                                 AKC
-                                <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 ${isClinicOnline ? 'bg-green-500' : 'bg-amber-400'}`} />
+                                {isClinicOnline && (<span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 bg-green-500" />)}
+                                {/* <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 ${isClinicOnline ? 'bg-green-500' : 'bg-amber-400'}`} /> */}
                             </div>
                             <div>
                                 <h1 className="text-base font-bold text-slate-900 dark:text-white leading-tight">Adelaide Knee Clinic</h1>
@@ -241,18 +283,18 @@ function ChatPageInner() {
                 <div className="flex-1 relative min-h-0 flex flex-col bg-slate-50/50 dark:bg-slate-900/30">
 
                     <div
-                        ref={messageListRef}
+                        ref={parentRef}
                         onScroll={handleScroll}
-                        className="flex-1 overflow-y-auto px-6 py-4 bg-slate-50/50 dark:bg-slate-900/30"
+                        className="flex-1 overflow-y-auto relative p-4"
                     >
                         {loadingMore && (
-                            <div className="flex justify-center py-2">
-                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
+                            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-white/80 dark:bg-slate-800/80 p-2 rounded-full shadow-sm backdrop-blur-sm">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
                             </div>
                         )}
 
                         {messages.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-16 px-4 text-center space-y-4">
+                            <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center space-y-4">
                                 <div className="p-4 bg-primary/5 rounded-full text-primary">
                                     <MessageSquare className="w-10 h-10 opacity-70" />
                                 </div>
@@ -264,123 +306,102 @@ function ChatPageInner() {
                                 </div>
                             </div>
                         ) : (
-                            groupMessagesByDay(messages).map(([dayKey, dayMsgs]) => (
-                                <div key={dayKey} className="flex flex-col">
-                                    {/* Date Separator Header */}
-                                    <div className="flex justify-center mt-6 mb-4">
-                                        <span className="text-[10px] font-bold text-slate-440 dark:text-slate-500 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-100 dark:border-slate-800/80 shadow-2xs uppercase tracking-wider">
-                                            {dayKey}
-                                        </span>
-                                    </div>
+                            <div
+                                style={{
+                                    height: `${virtualizer.getTotalSize()}px`,
+                                    width: '100%',
+                                    position: 'relative',
+                                }}
+                            >
+                                {virtualizer.getVirtualItems().map((virtualRow) => {
+                                    const item = flatItems[virtualRow.index];
+                                    const isPending = item.type === 'message' ? item.message.isPending : false;
 
-                                    {dayMsgs.map((msg, index) => {
-                                        const isPatient = msg.senderType === 'patient';
-                                        const prevMsg = dayMsgs[index - 1];
-                                        const nextMsg = dayMsgs[index + 1];
-
-                                        const FIVE_MINUTES = 5 * 60 * 1000;
-
-                                        // Determine the position of the message
-                                        const isFirstInGroup = !prevMsg ||
-                                            prevMsg.senderType !== msg.senderType ||
-                                            (new Date(msg.sentAt).getTime() - new Date(prevMsg.sentAt).getTime() > FIVE_MINUTES);
-
-                                        const isLastInGroup = !nextMsg ||
-                                            nextMsg.senderType !== msg.senderType ||
-                                            (new Date(nextMsg.sentAt).getTime() - new Date(msg.sentAt).getTime() > FIVE_MINUTES);
-
-                                        const isAbsoluteLastMsg = msg.id === messages[messages.length - 1].id && isPatient;
-                                        const isLastReadMsg = msg.id === lastReadPatientMsgId;
-                                        const showStatusBlock = isAbsoluteLastMsg || (isPatient && isLastReadMsg);
-
-                                        // Border Radius
-                                        let bubbleShapeClass = 'rounded-2xl';
-                                        if (isPatient) {
-                                            if (isFirstInGroup && isLastInGroup) {
-                                                bubbleShapeClass;
-                                            } else if (isFirstInGroup) {
-                                                bubbleShapeClass += ' rounded-br-xs';
-                                            } else if (isLastInGroup) {
-                                                bubbleShapeClass += ' rounded-tr-xs';
-                                            } else {
-                                                bubbleShapeClass += ' rounded-tr-xs rounded-br-xs';
-                                            }
-                                        } else { // Staff
-                                            if (isFirstInGroup && isLastInGroup) {
-                                                bubbleShapeClass;
-                                            } else if (isFirstInGroup) {
-                                                bubbleShapeClass += ' rounded-bl-xs';
-                                            } else if (isLastInGroup) {
-                                                bubbleShapeClass += ' rounded-tl-xs';
-                                            } else {
-                                                bubbleShapeClass += ' rounded-tl-xs rounded-bl-xs';
-                                            }
-                                        }
-
-                                        // Space between messages
-                                        const marginTopClass = index === 0 ? '' : isFirstInGroup ? 'mt-6' : 'mt-1';
-
-                                        return (
-                                            <div
-                                                key={msg.id}
-                                                className={`flex flex-col ${isPatient ? 'items-end' : 'items-start'} ${marginTopClass}`}
-                                            >
-                                                <div className="max-w-[80%] sm:max-w-[70%]">
-                                                    {/* Staff Name Tag - Only appear in the first message of the cluster */}
-                                                    {!isPatient && isFirstInGroup && (
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            data-index={virtualRow.index}
+                                            ref={virtualizer.measureElement}
+                                            style={{
+                                                position: 'absolute',
+                                                top: 0,
+                                                left: 0,
+                                                width: '100%',
+                                                transform: `translateY(${virtualRow.start}px)`,
+                                            }}
+                                            className="px-6"
+                                        >
+                                            {item.type === 'date' ? (
+                                                <div className="flex justify-center pt-6 pb-4">
+                                                    <span className="text-[10px] font-bold text-slate-440 dark:text-slate-500 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-100 dark:border-slate-800/80 shadow-2xs uppercase tracking-wider">
+                                                        {item.dateStr}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <div className={`w-full ${item.isFirstInGroup ? 'pt-6' : ''} pb-1`}>
+                                                    {/* <div className="max-w-[80%] sm:max-w-[70%]"> */}
+                                                    {!item.isPatient && item.isFirstInGroup && (
                                                         <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 ml-1.5 mb-1 block text-left">
                                                             Clinic Staff
                                                         </span>
                                                     )}
 
-                                                    {/* Message text bubble wrapper */}
                                                     <div
-                                                        className={`relative group flex items-center w-fit max-w-full cursor-pointer sm:cursor-auto ${isPatient ? 'ml-auto' : 'mr-auto'}`}
-                                                        onClick={() => setActiveTimeMsgId(prev => prev === msg.id ? null : msg.id)}
+                                                        className={`relative group flex items-center w-fit max-w-full cursor-pointer sm:cursor-auto ${item.isPatient ? 'ml-auto' : 'mr-auto'}`}
+                                                        onClick={() => setActiveTimeMsgId(prev => prev === item.id ? null : item.id)}
                                                     >
                                                         <div
-                                                            className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full ${isPatient
-                                                                ? `bg-primary text-white shadow-xs ${bubbleShapeClass}`
-                                                                : `bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs ${bubbleShapeClass}`
+                                                            className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full transition-opacity ${isPending ? 'opacity-60' : 'opacity-100'} ${item.isPatient
+                                                                ? 'bg-primary text-white shadow-xs rounded-2xl' +
+                                                                (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-br-xs' : item.isLastInGroup ? ' rounded-tr-xs' : ' rounded-tr-xs rounded-br-xs')
+                                                                : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs rounded-2xl' +
+                                                                (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-bl-xs' : item.isLastInGroup ? ' rounded-tl-xs' : ' rounded-tl-xs rounded-bl-xs')
                                                                 }`}
                                                         >
-                                                            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{msg.body}</p>
+                                                            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{item.message.body}</p>
                                                         </div>
                                                         <span
-                                                            className={`absolute ${isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
-                                                            transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none top-1/2 -translate-y-1/2
-                                                            ${activeTimeMsgId === msg.id ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'} 
-                                                        `}
+                                                            className={`absolute ${item.isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
+                                                                transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none top-1/2 -translate-y-1/2
+                                                                ${activeTimeMsgId === item.id ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'} 
+                                                            `}
                                                         >
-                                                            {formatBubbleTime(msg.sentAt)}
+                                                            {formatBubbleTime(item.message.sentAt)}
                                                         </span>
                                                     </div>
 
-                                                    {/* Timestamp - Only appear in the last message of the cluster */}
-                                                    {showStatusBlock && (
+                                                    {item.showStatusBlock && (
                                                         <div className="flex items-center gap-1 mt-1 px-1 justify-end">
-                                                            <span className="text-xs text-slate-400 dark:text-slate-500">
-                                                                {formatBubbleTime(msg.sentAt)}
-                                                            </span>
-
-                                                            {/* Single/double tick read receipt for Patient Messages */}
-                                                            {isPatient && (
-                                                                <span title={msg.readAt ? 'Seen' : 'Sent'} className="text-primary dark:text-primary-light">
-                                                                    {msg.readAt ? (
-                                                                        <CheckCheck className="w-3.5 h-3.5" />
-                                                                    ) : (
-                                                                        <Check className="w-3.5 h-3.5 text-slate-350" />
-                                                                    )}
+                                                            {isPending ? (
+                                                                <span className="text-[10px] italic text-slate-400 dark:text-slate-500">
+                                                                    Sending...
                                                                 </span>
+                                                            ) : (
+                                                                <>
+                                                                    <span className="text-xs text-slate-400 dark:text-slate-500">
+                                                                        {formatBubbleTime(item.message.sentAt)}
+                                                                    </span>
+
+                                                                    {item.isPatient && (
+                                                                        <span title={item.message.readAt ? 'Seen' : 'Sent'} className="text-primary dark:text-primary-light">
+                                                                            {item.message.readAt ? (
+                                                                                <CheckCheck className="w-3.5 h-3.5" />
+                                                                            ) : (
+                                                                                <Check className="w-3.5 h-3.5 text-slate-350" />
+                                                                            )}
+                                                                        </span>
+                                                                    )}
+                                                                </>
                                                             )}
                                                         </div>
                                                     )}
+                                                    {/* </div> */}
                                                 </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ))
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         )}
                     </div>
 

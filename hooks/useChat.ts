@@ -11,6 +11,7 @@ export interface ChatMessage {
     body: string;
     sentAt: string;
     readAt: string | null;
+    isPending?: boolean;
 }
 
 export function useChat() {
@@ -21,19 +22,17 @@ export function useChat() {
         async (url) => {
             const res = await fetch(url);
             const json = await res.json();
-            if (!res.ok) {
-                throw new Error(json.error?.message || 'Failed to load conversation');
-            }
+            if (!res.ok) throw new Error(json.error?.message || 'Failed to load conversation');
             return json;
         },
-        {
-            revalidateOnFocus: false,
-        }
+        { revalidateOnFocus: false }
     );
 
     const latestSentAtRef = useRef<string | null>(null);
     const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const offlineTimerRef = useRef<NodeJS.Timeout | null>(null);
+
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [loadingMessages, setLoadingMessages] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -41,9 +40,12 @@ export function useChat() {
     const [sending, setSending] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isClinicTyping, setIsClinicTyping] = useState(false);
-    const [pendingMessages, setPendingMessages] = useState<{ id: string, body: string }[]>([]);
-    const offlineTimerRef = useRef<NodeJS.Timeout | null>(null);
     const [isClinicOnline, setIsClinicOnline] = useState(false);
+
+    // Offline queue: stored in ref (no re-render), triggered via counter
+    const pendingQueueRef = useRef<{ id: string; body: string }[]>([]);
+    const isFlushingRef = useRef(false);
+    const [flushTrigger, setFlushTrigger] = useState(0);
 
     useEffect(() => {
         if (messages.length > 0) {
@@ -63,13 +65,9 @@ export function useChat() {
             try {
                 const res = await fetch('/api/patient/chat/messages?limit=20');
                 const data = await res.json();
-                if (!res.ok) {
-                    throw new Error(data.error?.message || 'Failed to load messages');
-                }
+                if (!res.ok) throw new Error(data.error?.message || 'Failed to load messages');
 
-                const fetchedMessages = data.data || [];
-                setMessages([...fetchedMessages].reverse());
-
+                setMessages([...data.data || []].reverse());
                 setHasMore(data.meta?.hasMore || false);
                 await markAsRead();
             } catch (err: any) {
@@ -92,11 +90,10 @@ export function useChat() {
                 if (existingIds.has(message.id)) return prev;
                 return [...prev, message];
             });
-            // Auto mark as read
             socket.emit('message:read', { conversationId: conversation.id });
         };
 
-        const handleMessageRead = (data: { conversationId: string, readBy: string }) => {
+        const handleMessageRead = (data: { conversationId: string; readBy: string }) => {
             if (data.readBy === 'staff') {
                 setMessages(prev => prev.map(m => m.readAt ? m : { ...m, readAt: new Date().toISOString() }));
             }
@@ -115,9 +112,7 @@ export function useChat() {
                 if (offlineTimerRef.current) clearTimeout(offlineTimerRef.current);
                 setIsClinicOnline(true);
             } else {
-                offlineTimerRef.current = setTimeout(() => {
-                    setIsClinicOnline(false);
-                }, 10000);
+                offlineTimerRef.current = setTimeout(() => setIsClinicOnline(false), 10000);
             }
         };
 
@@ -136,33 +131,6 @@ export function useChat() {
         };
     }, [socket, conversation]);
 
-    // Handle sending pending messages on reconnect
-    useEffect(() => {
-        if (isConnected && socket && conversation && pendingMessages.length > 0) {
-            const sendPending = async () => {
-                const msgsToProcess = [...pendingMessages];
-                setPendingMessages([]); // Clear queue immediately to avoid double send
-
-                for (const pending of msgsToProcess) {
-                    try {
-                        const newMessage: ChatMessage = await new Promise((resolve, reject) => {
-                            socket.emit('message:send', { conversationId: conversation.id, body: pending.body }, (response: any) => {
-                                if (response?.id) resolve(response);
-                                else reject(new Error('No response'));
-                            });
-                        });
-                        setMessages(prev => prev.map(m => m.id === pending.id ? newMessage : m));
-                    } catch (e) {
-                        // If it fails again, re-queue
-                        setPendingMessages(prev => [...prev, pending]);
-                    }
-                }
-            };
-            sendPending();
-        }
-    }, [isConnected, socket, conversation, pendingMessages]);
-
-
     // Polling fallback when disconnected
     useEffect(() => {
         if (!conversation || isConnected) {
@@ -173,35 +141,26 @@ export function useChat() {
             return;
         }
 
-        const startPolling = () => {
-            if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = setInterval(async () => {
+            try {
+                const query = latestSentAtRef.current
+                    ? `?after=${encodeURIComponent(latestSentAtRef.current)}`
+                    : '';
+                const res = await fetch(`/api/patient/chat/messages${query}`);
+                if (!res.ok) return;
 
-            pollingIntervalRef.current = setInterval(async () => {
-                try {
-                    const query = latestSentAtRef.current ? `?after=${encodeURIComponent(latestSentAtRef.current)}` : '';
-                    const res = await fetch(`/api/patient/chat/messages${query}`);
-
-                    if (!res.ok) return;
-
-                    const json = await res.json();
-                    const newMessages: ChatMessage[] = json.data || [];
-
-                    if (newMessages.length > 0) {
-                        setMessages(prev => {
-                            const existingIds = new Set(prev.map(m => m.id));
-                            const uniqueNew = [...newMessages].reverse().filter(m => !existingIds.has(m.id));
-                            if (uniqueNew.length === 0) return prev;
-                            return [...prev, ...uniqueNew];
-                        });
-                        await markAsRead();
-                    }
-                } catch (e) {
-                    // Ignore background polling errors
+                const json = await res.json();
+                const newMessages: ChatMessage[] = json.data || [];
+                if (newMessages.length > 0) {
+                    setMessages(prev => {
+                        const existingIds = new Set(prev.map(m => m.id));
+                        const uniqueNew = newMessages.filter(m => !existingIds.has(m.id));
+                        if (uniqueNew.length === 0) return prev;
+                        return [...prev, ...uniqueNew];
+                    });
                 }
-            }, 4000);
-        };
-
-        startPolling();
+            } catch (_) { /* ignore */ }
+        }, 4000);
 
         return () => {
             if (pollingIntervalRef.current) {
@@ -211,6 +170,67 @@ export function useChat() {
         };
     }, [conversation, isConnected]);
 
+    // Trigger queue flush when connection is restored
+    useEffect(() => {
+        if (isConnected && socket && conversation) {
+            setFlushTrigger(n => n + 1);
+        }
+    }, [isConnected, socket, conversation]);
+
+    // Flush pending queue — runs whenever flushTrigger increments
+    useEffect(() => {
+        if (!isConnected || !socket || !conversation) return;
+        if (pendingQueueRef.current.length === 0) return;
+        if (isFlushingRef.current) return;
+
+        const flushQueue = async () => {
+            isFlushingRef.current = true;
+
+            while (pendingQueueRef.current.length > 0) {
+                const pending = pendingQueueRef.current[0];
+
+                try {
+                    const newMessage: ChatMessage = await new Promise((resolve, reject) => {
+                        const timer = setTimeout(() => reject(new Error('Timeout')), 8000);
+
+                        socket.emit('message:send', {
+                            conversationId: conversation.id,
+                            body: pending.body,
+                            tempId: pending.id,
+                        }, (response: any) => {
+                            clearTimeout(timer);
+                            if (response?.id) resolve(response);
+                            else reject(new Error(response?.error?.message || 'Send failed'));
+                        });
+                    });
+
+                    // Remove from queue only after success
+                    pendingQueueRef.current = pendingQueueRef.current.slice(1);
+
+                    setMessages(prev => {
+                        const mapped = prev.map(m =>
+                            m.id === pending.id ? { ...newMessage, isPending: false } : m
+                        );
+                        const seen = new Set<string>();
+                        return mapped.filter(m => {
+                            if (seen.has(m.id)) return false;
+                            seen.add(m.id);
+                            return true;
+                        });
+                    });
+
+                    await new Promise(r => setTimeout(r, 100));
+                } catch (_) {
+                    break; // Stop flushing, retry on next trigger
+                }
+            }
+
+            isFlushingRef.current = false;
+        };
+
+        flushQueue();
+    }, [flushTrigger, socket, isConnected, conversation]);
+
     const markAsRead = async () => {
         if (!conversation) return;
         if (isConnected && socket) {
@@ -218,9 +238,7 @@ export function useChat() {
         } else {
             try {
                 await fetch('/api/patient/chat/conversation', { method: 'PATCH' });
-            } catch (e) {
-                // Fail silently
-            }
+            } catch (_) { /* fail silently */ }
         }
     };
 
@@ -236,58 +254,64 @@ export function useChat() {
     }, [conversation, isConnected, socket]);
 
     const sendMessage = async (body: string) => {
-        if (!body.trim() || sending || !conversation) return;
+        if (!body.trim() || !conversation) return;
 
-        // Clear typing status
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         if (socket && isConnected) socket.emit('typing:stop', { conversationId: conversation.id });
 
-        setSending(true);
-        try {
-            if (isConnected && socket) {
-                // Real-time send
+        const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const optimisticMessage: ChatMessage = {
+            id: tempId,
+            conversationId: conversation.id,
+            senderType: 'patient',
+            senderId: 'optimistic',
+            body: body.trim(),
+            sentAt: new Date().toISOString(),
+            readAt: null,
+            isPending: true,
+        };
+
+        // Always show optimistic message immediately
+        setMessages(prev => [...prev, optimisticMessage]);
+
+        if (isConnected && socket) {
+            // Online path: send via socket, await ACK
+            setSending(true);
+            try {
                 const newMessage: ChatMessage = await new Promise((resolve, reject) => {
-                    socket.emit('message:send', { conversationId: conversation.id, body: body.trim() }, (response: any) => {
+                    const timer = setTimeout(() => reject(new Error('Timeout')), 8000);
+
+                    socket.emit('message:send', {
+                        conversationId: conversation.id,
+                        body: body.trim(),
+                        tempId,
+                    }, (response: any) => {
+                        clearTimeout(timer);
                         if (response?.id) resolve(response);
                         else reject(new Error('Failed to send message via socket'));
                     });
                 });
-                setMessages(prev => [...prev, newMessage]);
-            } else {
-                // Fallback / Offline queue
-                try {
-                    const res = await fetch('/api/patient/chat/messages', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ body: body.trim() }),
+
+                setMessages(prev => {
+                    const mapped = prev.map(m =>
+                        m.id === tempId ? { ...newMessage, isPending: false } : m
+                    );
+                    const seen = new Set<string>();
+                    return mapped.filter(m => {
+                        if (seen.has(m.id)) return false;
+                        seen.add(m.id);
+                        return true;
                     });
-
-                    const responseJson = await res.json();
-                    if (!res.ok) throw new Error(responseJson.error?.message || 'Failed to send message');
-
-                    setMessages(prev => [...prev, responseJson.data]);
-                } catch (e) {
-                    // Queue for offline
-                    const tempId = `temp-${Date.now()}`;
-                    const optimisticMessage: ChatMessage = {
-                        id: tempId,
-                        conversationId: conversation.id,
-                        senderType: 'patient',
-                        senderId: 'optimistic',
-                        body: body.trim(),
-                        sentAt: new Date().toISOString(),
-                        readAt: null
-                    };
-
-                    setMessages(prev => [...prev, optimisticMessage]);
-                    setPendingMessages(prev => [...prev, { id: tempId, body: body.trim() }]);
-                }
+                });
+            } catch (err: any) {
+                toast.error('Network error. Message queued.');
+                pendingQueueRef.current = [...pendingQueueRef.current, { id: tempId, body: body.trim() }];
+            } finally {
+                setSending(false);
             }
-        } catch (err: any) {
-            toast.error(err.message || 'Failed to send message');
-            throw err;
-        } finally {
-            setSending(false);
+        } else {
+            // Offline path: queue immediately, no blocking
+            pendingQueueRef.current = [...pendingQueueRef.current, { id: tempId, body: body.trim() }];
         }
     };
 
@@ -296,13 +320,11 @@ export function useChat() {
         setLoadingMore(true);
         try {
             const oldestSentAt = messages[0].sentAt;
-
-            const res = await fetch(`/api/patient/chat/messages?before=${encodeURIComponent(oldestSentAt)}&limit=20`);
+            const res = await fetch(
+                `/api/patient/chat/messages?before=${encodeURIComponent(oldestSentAt)}&limit=20`
+            );
             const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error?.message || 'Failed to load older messages');
-            }
+            if (!res.ok) throw new Error(data.error?.message || 'Failed to load older messages');
 
             const olderMessages: ChatMessage[] = data.data || [];
             if (olderMessages.length > 0) {

@@ -11,17 +11,43 @@ const firebaseConfig = {
 };
 
 firebase.initializeApp(firebaseConfig);
-
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-    console.log('[firebase-messaging-sw.js] Received background message ', payload);
-    const notificationTitle = payload.notification ? payload.notification.title : 'New Notification';
+    console.log('[firebase-messaging-sw.js] Received data-only message', payload);
+
+    const data = payload.data || {};
+
+    const notificationTitle = data.title || 'New Message';
     const notificationOptions = {
-        body: payload.notification ? payload.notification.body : '',
+        body: data.body || '',
         icon: '/favicon.ico',
-        data: payload.data,
+        badge: '/favicon.ico',
+        data: {
+            url: '/chat'
+        }
     };
 
     self.registration.showNotification(notificationTitle, notificationOptions);
+});
+
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const targetUrl = event.notification.data?.url || '/dashboard';
+    event.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+            for (let i = 0; i < windowClients.length; i++) {
+                const client = windowClients[i];
+
+                if (client.url.includes(self.location.origin) && 'focus' in client) {
+                    client.navigate(targetUrl);
+                    return client.focus();
+                }
+            }
+
+            if (clients.openWindow) {
+                return clients.openWindow(targetUrl);
+            }
+        })
+    );
 });

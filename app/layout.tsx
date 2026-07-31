@@ -17,7 +17,7 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "KRPS Patient Portal",
+  title: "KRPS - Patient Portal",
   description: "Patient portal for knee rehabilitation progress tracking",
 };
 

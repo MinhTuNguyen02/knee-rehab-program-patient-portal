@@ -1,5 +1,5 @@
 import useSWR from 'swr';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getClientMessaging } from '@/lib/firebase';
 import { getToken, onMessage } from 'firebase/messaging';
 import useSWRInfinite from 'swr/infinite';
@@ -135,27 +135,40 @@ export function useNotifications() {
         }
     };
 
+    const checkAndClearUnread = useCallback((isOpen: boolean, data: any[]) => {
+        if (!isOpen || !data || data.length === 0) return;
+
+        const unreadIds = data
+            .filter(n => !n.readAt && n.type === 'clinic_message')
+            .map(n => n.id);
+
+        if (unreadIds.length > 0) {
+            mutateList(pages => {
+                if (!pages) return pages;
+                return pages.map(page => ({
+                    ...page,
+                    data: page.data.map((n: PatientNotification) =>
+                        unreadIds.includes(n.id) ? { ...n, readAt: new Date().toISOString() } : n
+                    )
+                }));
+            }, false);
+
+            mutateCount(prev => prev ? { count: Math.max(0, prev.count - unreadIds.length) } : prev, false);
+
+            unreadIds.forEach(id => {
+                fetch(`/api/patient/notifications/${id}/read`, { method: 'PATCH' }).catch(console.error);
+            });
+        }
+    }, [mutateList, mutateCount]);
+
     useEffect(() => {
         const handleChatOpened = () => {
             isChatOpenRef.current = true;
-
-            if (notificationsData) {
-                const unreadIds = notificationsData
-                    .filter(n => !n.readAt && n.type === 'clinic_message')
-                    .map(n => n.id);
-
-                if (unreadIds.length > 0) {
-                    mutateList(prev => prev?.map(n => unreadIds.includes(n.id) ? { ...n, readAt: new Date().toISOString() } : n), false);
-                    mutateCount(prev => prev ? { count: Math.max(0, prev.count - unreadIds.length) } : prev, false);
-
-                    unreadIds.forEach(id => {
-                        fetch(`/api/patient/notifications/${id}/read`, { method: 'PATCH' }).catch(console.error);
-                    });
-                }
-            }
+            checkAndClearUnread(true, notificationsData);
         };
-
-        const handleChatClosed = () => { isChatOpenRef.current = false; };
+        const handleChatClosed = () => {
+            isChatOpenRef.current = false;
+        };
 
         window.addEventListener('chat_opened', handleChatOpened);
         window.addEventListener('chat_closed', handleChatClosed);
@@ -164,7 +177,11 @@ export function useNotifications() {
             window.removeEventListener('chat_opened', handleChatOpened);
             window.removeEventListener('chat_closed', handleChatClosed);
         };
-    }, [notificationsData, mutateList, mutateCount]);
+    }, [notificationsData, checkAndClearUnread]);
+
+    useEffect(() => {
+        checkAndClearUnread(isChatOpenRef.current, notificationsData);
+    }, [notificationsData, checkAndClearUnread]);
 
     // FCM Setup
     useEffect(() => {
