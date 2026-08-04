@@ -242,7 +242,7 @@ export function useChat() {
 
                     setMessages(prev => {
                         const mapped = prev.map(m =>
-                            m.id === pending.id ? { ...ackMessage, isPending: false } : m
+                            m.id === pending.id ? { ...ackMessage, isPending: false, sentAt: m.sentAt } : m
                         );
                         const seen = new Set<string>();
                         return mapped.filter(m => {
@@ -263,6 +263,36 @@ export function useChat() {
 
         flushQueue();
     }, [flushTrigger, socket, isConnected, conversation, syncQueueToStorage]);
+
+    useEffect(() => {
+        if (isConnected && messages.length > 0) {
+            const fetchMissedMessages = async () => {
+                try {
+                    const query = latestSentAtRef.current
+                        ? `?after=${encodeURIComponent(latestSentAtRef.current)}`
+                        : '';
+
+                    const res = await fetch(`/api/patient/chat/messages${query}`);
+                    if (!res.ok) return;
+
+                    const json = await res.json();
+                    const missedMessages: ChatMessage[] = json.data || [];
+
+                    if (missedMessages.length > 0) {
+                        setMessages(prev => {
+                            const existingIds = new Set(prev.map(m => m.id));
+                            const uniqueNew = missedMessages.filter(m => !existingIds.has(m.id));
+                            return [...prev, ...uniqueNew];
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error fetching missed messages:", e);
+                }
+            };
+
+            fetchMissedMessages();
+        }
+    }, [isConnected]);
 
     const markAsRead = async () => {
         if (!conversation) return;
@@ -322,7 +352,7 @@ export function useChat() {
         if (loadingMore || !hasMore || messages.length === 0) return;
         setLoadingMore(true);
         try {
-            const oldestClientTimestamp = messages[0].client_timestamp;
+            const oldestClientTimestamp = messages[0].client_timestamp || new Date(messages[0].sentAt).getTime();
             const res = await fetch(
                 `/api/patient/chat/messages?before=${oldestClientTimestamp}&limit=20`
             );

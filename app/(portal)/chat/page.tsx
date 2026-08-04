@@ -271,12 +271,7 @@ function ChatPageInner() {
                         </div>
                     </div>
                     {/* Reconnection Banner */}
-                    {isReconnecting && (
-                        <div className="bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center justify-center gap-2">
-                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-600 dark:border-amber-500"></div>
-                            <span className="text-xs font-medium text-amber-700 dark:text-amber-500">Reconnecting...</span>
-                        </div>
-                    )}
+
                 </div>
 
                 {/* Chat Body Scroll Container */}
@@ -287,6 +282,12 @@ function ChatPageInner() {
                         onScroll={handleScroll}
                         className="flex-1 overflow-y-auto relative p-4"
                     >
+                        {isReconnecting && (
+                            <div className="sticky top-4 z-10 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-2 flex items-center justify-center gap-2 mb-4 mx-auto max-w-sm shadow-sm">
+                                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-600 dark:border-amber-500"></div>
+                                <span className="text-xs font-medium text-amber-700 dark:text-amber-500">Reconnecting...</span>
+                            </div>
+                        )}
                         {loadingMore && (
                             <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-white/80 dark:bg-slate-800/80 p-2 rounded-full shadow-sm backdrop-blur-sm">
                                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
@@ -371,7 +372,7 @@ function ChatPageInner() {
                                                     </div>
 
                                                     {item.showStatusBlock && (
-                                                        <div className="flex items-center gap-1 mt-1 px-1 justify-end">
+                                                        <div className="flex items-center gap-1 mt-1 px-1 justify-end min-h-[20px]">
                                                             {isPending ? (
                                                                 <span className="text-[10px] italic text-slate-400 dark:text-slate-500">
                                                                     Sending...
