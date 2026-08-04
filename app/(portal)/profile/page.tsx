@@ -175,8 +175,9 @@ export default function ProfilePage() {
                 <form ref={formRef} onSubmit={handleSubmit(handleProfileSubmit)} className="p-6 space-y-5">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                         <div className="space-y-1">
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">First Name</label>
+                            <label htmlFor="firstName" className="text-sm font-medium text-gray-700 dark:text-gray-300">First Name</label>
                             <input
+                                id="firstName"
                                 {...register('firstName', { required: 'First name is required' })}
                                 type="text"
                                 disabled={!isEdit}
@@ -190,8 +191,9 @@ export default function ProfilePage() {
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Last Name</label>
+                            <label htmlFor="lastName" className="text-sm font-medium text-gray-700 dark:text-gray-300">Last Name</label>
                             <input
+                                id="lastName"
                                 {...register('lastName', { required: 'Last name is required' })}
                                 type="text"
                                 disabled={!isEdit}
@@ -206,8 +208,9 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="space-y-1">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Email Address (Cannot be changed)</label>
+                        <label htmlFor="email" className="text-sm font-medium text-gray-700 dark:text-gray-300">Email Address (Cannot be changed)</label>
                         <input
+                            id="email"
                             type="email"
                             defaultValue={profile.email}
                             disabled
@@ -216,7 +219,7 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="space-y-1">
-                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Mobile Number</label>
+                        <label htmlFor="mobile" className="text-sm font-medium text-gray-700 dark:text-gray-300">Mobile Number</label>
                         <Controller
                             name="mobile"
                             control={control}
@@ -248,8 +251,9 @@ export default function ProfilePage() {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
 
                         <div className="space-y-1">
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Age</label>
+                            <label htmlFor="age" className="text-sm font-medium text-gray-700 dark:text-gray-300">Age</label>
                             <input
+                                id="age"
                                 type="number"
                                 defaultValue={profile.age}
                                 disabled
@@ -258,8 +262,9 @@ export default function ProfilePage() {
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Gender</label>
+                            <label htmlFor="gender" className="text-sm font-medium text-gray-700 dark:text-gray-300">Gender</label>
                             <input
+                                id="gender"
                                 type="text"
                                 defaultValue={profile.gender}
                                 disabled
@@ -268,8 +273,9 @@ export default function ProfilePage() {
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Knee Side</label>
+                            <label htmlFor="kneeSide" className="text-sm font-medium text-gray-700 dark:text-gray-300">Knee Side</label>
                             <input
+                                id="kneeSide"
                                 type="text"
                                 defaultValue={getKneeSideLabel(profile.kneeSide)}
                                 disabled
