@@ -446,15 +446,17 @@ function ChatPageInner() {
                             ref={inputRef}
                             value={inputText}
                             onChange={handleTextChange}
-                            disabled={isReconnecting}
-                            placeholder={isReconnecting ? "Reconnecting..." : "Type a message..."}
+                            // disabled={isReconnecting}
+                            // placeholder={isReconnecting ? "Reconnecting..." : "Type a message..."}
+                            placeholder={"Type a message..."}
                             onKeyDown={handleKeyDown}
                             rows={1}
                             className="flex-1 resize-none overflow-y-auto max-h-[250px] min-h-[44px] px-4 py-2 bg-slate-50 hover:bg-slate-100/60 dark:bg-slate-800/50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:bg-white dark:focus:bg-slate-800 text-sm text-slate-900 dark:text-white transition-all disabled:opacity-50"
                         />
                         <button
                             type="submit"
-                            disabled={!inputText.trim() || sending || isReconnecting}
+                            // disabled={!inputText.trim() || sending || isReconnecting}
+                            disabled={!inputText.trim() || sending}
                             className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary hover:bg-primary-hover active:scale-[0.97] transition-all text-white disabled:opacity-30 disabled:pointer-events-none shadow-md shrink-0 shadow-primary/10"
                             aria-label="Send message"
                         >
