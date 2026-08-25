@@ -14,6 +14,9 @@ export interface ChatMessage {
     readAt: string | null;
     isPending?: boolean;
     client_timestamp?: number;
+    reactions?: Record<string, { count: number; reactorIds: string[] }>;
+    replyToMessageId?: string;
+    replyToMessage?: ChatMessage;
 }
 
 export function useChat() {
@@ -146,11 +149,18 @@ export function useChat() {
             }
         };
 
+        const handleReactionUpdate = (data: { messageId: string; reactions: Record<string, { count: number; reactorIds: string[] }> }) => {
+            setMessages(prev => prev.map(m => 
+                m.id === data.messageId ? { ...m, reactions: data.reactions } : m
+            ));
+        };
+
         socket.on('message:receive', handleMessageReceive);
         socket.on('message:read', handleMessageRead);
         socket.on('typing:start', handleTypingStart);
         socket.on('typing:stop', handleTypingStop);
         socket.on('staff:status', handleStaffStatus);
+        socket.on('reaction:update', handleReactionUpdate);
 
         return () => {
             socket.off('message:receive', handleMessageReceive);
@@ -158,6 +168,7 @@ export function useChat() {
             socket.off('typing:start', handleTypingStart);
             socket.off('typing:stop', handleTypingStop);
             socket.off('staff:status', handleStaffStatus);
+            socket.off('reaction:update', handleReactionUpdate);
         };
     }, [socket, conversation]);
 
@@ -229,6 +240,7 @@ export function useChat() {
                             id: pending.id,
                             client_timestamp: pending.client_timestamp,
                             body: pending.body,
+                            replyToMessageId: pending.replyToMessageId,
                         }, (response: any) => {
                             clearTimeout(timer);
                             if (response?.id) resolve(response);
@@ -317,7 +329,7 @@ export function useChat() {
     }, [conversation, isConnected, socket]);
 
     // 3. Send Message Logic: Only updates Optimistic UI and enqueues
-    const sendMessage = async (body: string) => {
+    const sendMessage = async (body: string, replyToMessage?: ChatMessage) => {
         if (!body.trim() || !conversation) return;
 
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -335,13 +347,20 @@ export function useChat() {
             readAt: null,
             isPending: true,
             client_timestamp: clientTimestamp,
+            replyToMessageId: replyToMessage?.id,
+            replyToMessage: replyToMessage,
         };
 
         // Always show optimistic message immediately
         setMessages(prev => [...prev, optimisticMessage]);
 
         // Add to persistent queue
-        pendingQueueRef.current = [...pendingQueueRef.current, { id: realUuid, body: body.trim(), client_timestamp: clientTimestamp }];
+        pendingQueueRef.current = [...pendingQueueRef.current, { 
+            id: realUuid, 
+            body: body.trim(), 
+            client_timestamp: clientTimestamp,
+            replyToMessageId: replyToMessage?.id
+        }];
         syncQueueToStorage(pendingQueueRef.current);
 
         // Trigger flush (if connected, the flushQueue effect will pick this up)
@@ -375,6 +394,15 @@ export function useChat() {
         }
     };
 
+    const toggleReaction = useCallback((messageId: string, emoji: string) => {
+        if (!socket || !isConnected || !conversation) return;
+        socket.emit('reaction:toggle', {
+            messageId,
+            conversationId: conversation.id,
+            emoji
+        });
+    }, [socket, isConnected, conversation]);
+
     return {
         conversation,
         messages,
@@ -391,5 +419,6 @@ export function useChat() {
         sendMessage,
         loadMore,
         markAsRead,
+        toggleReaction,
     };
 }

@@ -1,13 +1,24 @@
 'use client';
 
-import { useState, useRef, useEffect, UIEvent, useMemo } from 'react';
-import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown } from 'lucide-react';
+import { useState, useRef, useEffect, UIEvent, useMemo, useCallback } from 'react';
+import dynamic from 'next/dynamic';
+import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown, Smile, SmilePlus, CornerUpLeft } from 'lucide-react';
 import { useChat, ChatMessage } from '@/hooks/useChat';
 import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 import { formatBubbleTime, formatDateDivider } from '@/lib/utils';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import type { EmojiClickData } from 'emoji-picker-react';
+
+const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
+
+const DEFAULT_REACTIONS = [
+    { unified: '1f44d', emoji: '👍' },
+    { unified: '2764-fe0f', emoji: '❤️' },
+    { unified: '1f606', emoji: '😆' },
+    { unified: '1f62e', emoji: '😮' },
+];
 
 type ChatItem =
     | { type: 'date'; id: string; dateStr: string }
@@ -44,18 +55,28 @@ function ChatPageInner() {
         isClinicOnline,
         emitTyping,
         sendMessage,
-        loadMore
+        loadMore,
+        toggleReaction
     } = useChat();
 
     const [inputText, setInputText] = useState('');
+    const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
 
     const parentRef = useRef<HTMLDivElement>(null);
     const previousHeightRef = useRef<number>(0);
     const lastMessageIdRef = useRef<string | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const emojiPickerRef = useRef<HTMLDivElement>(null);
+    const emojiBtnRef = useRef<HTMLButtonElement>(null);
 
     const [activeTimeMsgId, setActiveTimeMsgId] = useState<string | null>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+    const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
+    const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+
+    const reactionPickerRef = useRef<HTMLDivElement>(null);
+    const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     const lastReadPatientMsgId = useMemo(() => {
         const lastReadMsg = [...messages].reverse().find(m => m.senderType === 'patient' && m.readAt);
@@ -69,6 +90,18 @@ function ChatPageInner() {
             window.dispatchEvent(new Event('chat_closed'));
         };
     }, []);
+
+    // Close reaction picker when clicking outside
+    useEffect(() => {
+        if (!reactionPickerMsgId) return;
+        const handler = (e: MouseEvent) => {
+            if (reactionPickerRef.current && !reactionPickerRef.current.contains(e.target as Node)) {
+                setReactionPickerMsgId(null);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [reactionPickerMsgId]);
 
     // Flatten data Virtualizer
     const flatItems = useMemo(() => {
@@ -125,6 +158,52 @@ function ChatPageInner() {
         overscan: 10,
     });
 
+    // Wrap measureElement in useCallback to avoid flushSync-inside-render warning
+    // flushSync is called internally by react-virtual; using a stable callback ref
+    // ensures it fires after DOM commit, not during React's render phase.
+    const measureRef = useCallback((el: Element | null) => {
+        virtualizer.measureElement(el);
+    }, [virtualizer]);
+
+    // Close emoji picker when clicking outside
+    useEffect(() => {
+        if (!showEmojiPicker) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                emojiPickerRef.current &&
+                !emojiPickerRef.current.contains(e.target as Node) &&
+                emojiBtnRef.current &&
+                !emojiBtnRef.current.contains(e.target as Node)
+            ) {
+                setShowEmojiPicker(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showEmojiPicker]);
+
+    const handleEmojiClick = useCallback((emojiData: EmojiClickData) => {
+        const emoji = emojiData.emoji;
+        const textarea = inputRef.current;
+        if (!textarea) {
+            setInputText(prev => prev + emoji);
+            return;
+        }
+        const start = textarea.selectionStart ?? inputText.length;
+        const end = textarea.selectionEnd ?? inputText.length;
+        const newText = inputText.slice(0, start) + emoji + inputText.slice(end);
+        setInputText(newText);
+        // Restore cursor position after state update
+        requestAnimationFrame(() => {
+            textarea.focus();
+            const newPos = start + emoji.length;
+            textarea.setSelectionRange(newPos, newPos);
+            // Auto-resize
+            textarea.style.height = 'auto';
+            textarea.style.height = `${textarea.scrollHeight}px`;
+        });
+    }, [inputText]);
+
     const scrollToBottom = (smooth = false) => {
         if (flatItems.length > 0) {
             virtualizer.scrollToIndex(flatItems.length - 1, {
@@ -132,6 +211,13 @@ function ChatPageInner() {
                 behavior: smooth ? 'smooth' : 'auto'
             });
             setShowScrollButton(false);
+        }
+    };
+
+    const scrollToMessage = (messageId: string) => {
+        const index = flatItems.findIndex(item => item.id === messageId);
+        if (index !== -1) {
+            virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
         }
     };
 
@@ -192,7 +278,8 @@ function ChatPageInner() {
         scrollToBottom();
 
         try {
-            await sendMessage(text);
+            await sendMessage(text, replyingTo || undefined);
+            setReplyingTo(null);
             scrollToBottom();
         } catch (err) {
             setInputText(text);
@@ -322,7 +409,7 @@ function ChatPageInner() {
                                         <div
                                             key={item.id}
                                             data-index={virtualRow.index}
-                                            ref={virtualizer.measureElement}
+                                            ref={measureRef}
                                             style={{
                                                 position: 'absolute',
                                                 top: 0,
@@ -340,35 +427,179 @@ function ChatPageInner() {
                                                 </div>
                                             ) : (
                                                 <div className={`w-full ${item.isFirstInGroup ? 'pt-6' : ''} pb-1`}>
-                                                    {/* <div className="max-w-[80%] sm:max-w-[70%]"> */}
                                                     {!item.isPatient && item.isFirstInGroup && (
                                                         <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 ml-1.5 mb-1 block text-left">
                                                             Clinic Staff
                                                         </span>
                                                     )}
-
+                                                    {/* Hover wrapper: relative for absolute toolbar */}
                                                     <div
-                                                        className={`relative group flex items-center w-fit max-w-full cursor-pointer sm:cursor-auto ${item.isPatient ? 'ml-auto' : 'mr-auto'}`}
-                                                        onClick={() => setActiveTimeMsgId(prev => prev === item.id ? null : item.id)}
+                                                        className={`relative w-fit max-w-full ${item.isPatient ? 'ml-auto' : 'mr-auto'}`}
+                                                        onMouseEnter={() => {
+                                                            if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+                                                            setHoveredMsgId(item.id);
+                                                        }}
+                                                        onMouseLeave={() => {
+                                                            if (reactionPickerMsgId === item.id) return;
+                                                            hoverTimeoutRef.current = setTimeout(() => setHoveredMsgId(null), 120);
+                                                        }}
                                                     >
-                                                        <div
-                                                            className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full transition-opacity ${isPending ? 'opacity-60' : 'opacity-100'} ${item.isPatient
-                                                                ? 'bg-primary text-white shadow-xs rounded-2xl' +
-                                                                (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-br-xs' : item.isLastInGroup ? ' rounded-tr-xs' : ' rounded-tr-xs rounded-br-xs')
-                                                                : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs rounded-2xl' +
-                                                                (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-bl-xs' : item.isLastInGroup ? ' rounded-tl-xs' : ' rounded-tl-xs rounded-bl-xs')
-                                                                }`}
+                                                        {/* Reaction toolbar — absolute, above the bubble */}
+                                                        <div className={`absolute bottom-full mb-1 z-30 flex items-center gap-0.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full px-1.5 py-1 shadow-md transition-all duration-150
+                                                            ${item.isPatient ? 'right-0' : 'left-0'}
+                                                            ${(hoveredMsgId === item.id || reactionPickerMsgId === item.id)
+                                                                ? 'opacity-100 scale-100 pointer-events-auto'
+                                                                : 'opacity-0 scale-90 pointer-events-none'}`}
                                                         >
-                                                            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{item.message.body}</p>
+                                                            {/* 4 quick reaction emojis */}
+                                                            {DEFAULT_REACTIONS.map(({ unified, emoji }) => (
+                                                                <button
+                                                                    key={unified}
+                                                                    type="button"
+                                                                    title={emoji}
+                                                                    onClick={() => toggleReaction(item.id, emoji)}
+                                                                    className="text-lg leading-none w-7 h-7 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 hover:scale-125 transition-all duration-100 cursor-pointer"
+                                                                >
+                                                                    {emoji}
+                                                                </button>
+                                                            ))}
+
+                                                            {/* Divider */}
+                                                            <span className="w-px h-4 bg-slate-200 dark:bg-slate-600 mx-0.5 shrink-0" />
+
+                                                            {/* More reactions button */}
+                                                            <div className="relative" ref={reactionPickerMsgId === item.id ? reactionPickerRef : null}>
+                                                                <button
+                                                                    type="button"
+                                                                    title="More reactions"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setReactionPickerMsgId(prev => prev === item.id ? null : item.id);
+                                                                        setHoveredMsgId(item.id);
+                                                                    }}
+                                                                    className={`w-7 h-7 flex items-center justify-center rounded-full transition-all cursor-pointer
+                                                                        ${reactionPickerMsgId === item.id
+                                                                            ? 'bg-primary/10 text-primary'
+                                                                            : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary'}`}
+                                                                >
+                                                                    <SmilePlus className="w-4 h-4" />
+                                                                </button>
+
+                                                                {/* Full picker anchored to this button */}
+                                                                {reactionPickerMsgId === item.id && (
+                                                                    <div className={`absolute bottom-full mb-2 z-50 drop-shadow-2xl ${item.isPatient ? 'right-0' : 'left-0'}`}>
+                                                                        <EmojiPicker
+                                                                            onEmojiClick={(emojiData) => {
+                                                                                toggleReaction(item.id, emojiData.emoji);
+                                                                                setReactionPickerMsgId(null);
+                                                                                setHoveredMsgId(null);
+                                                                            }}
+                                                                            theme={"auto" as any}
+                                                                            emojiStyle={"native" as any}
+                                                                            autoFocusSearch={false}
+                                                                            height={360}
+                                                                            width={300}
+                                                                            searchPlaceholder="Find emoji..."
+                                                                            lazyLoadEmojis
+                                                                            previewConfig={{ showPreview: false }}
+                                                                            style={{
+                                                                                '--epr-bg-color': 'var(--color-background, #fff)',
+                                                                                '--epr-category-label-bg-color': 'var(--color-background, #fff)',
+                                                                                '--epr-text-color': 'var(--color-foreground, #0f172a)',
+                                                                                '--epr-search-border-color': 'var(--color-border, #e2e8f0)',
+                                                                                '--epr-border-color': 'var(--color-border, #e2e8f0)',
+                                                                                borderRadius: '16px',
+                                                                                border: '1px solid',
+                                                                                borderColor: 'var(--color-border, #e2e8f0)',
+                                                                            } as React.CSSProperties}
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            {/* Divider */}
+                                                            <span className="w-px h-4 bg-slate-200 dark:bg-slate-600 mx-0.5 shrink-0" />
+
+                                                            {/* Reply button */}
+                                                            <button
+                                                                type="button"
+                                                                title="Reply"
+                                                                onClick={() => {
+                                                                    setReplyingTo(item.message);
+                                                                    inputRef.current?.focus();
+                                                                }}
+                                                                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all cursor-pointer"
+                                                            >
+                                                                <CornerUpLeft className="w-4 h-4" />
+                                                            </button>
                                                         </div>
-                                                        <span
-                                                            className={`absolute ${item.isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
-                                                                transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none top-1/2 -translate-y-1/2
-                                                                ${activeTimeMsgId === item.id ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'} 
-                                                            `}
-                                                        >
-                                                            {formatBubbleTime(item.message.sentAt)}
-                                                        </span>
+
+                                                        {/* Message bubble + Reactions */}
+                                                        <div className={`flex flex-col gap-1 w-full max-w-full ${item.isPatient ? 'items-end' : 'items-start'}`}>
+                                                            {item.message.replyToMessage && (
+                                                                <div 
+                                                                    className={`mb-0 max-w-[85%] text-xs bg-slate-100 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 p-2 rounded-xl border border-slate-200/50 dark:border-slate-700/50 relative cursor-pointer hover:opacity-100 transition-opacity ${item.isPatient ? 'opacity-80' : 'opacity-80'}`}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        if (item.message.replyToMessageId) {
+                                                                            scrollToMessage(item.message.replyToMessageId);
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <p className="font-semibold mb-0.5 opacity-80">
+                                                                        {item.message.replyToMessage.senderType === 'patient' ? 'Patient' : 'Clinic'}
+                                                                    </p>
+                                                                    <p className="truncate opacity-90">{item.message.replyToMessage.body}</p>
+                                                                    <div className={`absolute top-full w-2 h-2 bg-slate-100 dark:bg-slate-800/80 border-b border-r border-slate-200/50 dark:border-slate-700/50 transform rotate-45 ${item.isPatient ? 'right-4 -mt-1' : 'left-4 -mt-1'}`}></div>
+                                                                </div>
+                                                            )}
+                                                            <div
+                                                                className={`relative group flex items-center cursor-pointer sm:cursor-auto w-fit max-w-full ${item.isPatient ? 'ml-auto' : 'mr-auto'}`}
+                                                                onClick={() => setActiveTimeMsgId(prev => prev === item.id ? null : item.id)}
+                                                            >
+                                                                <div
+                                                                    className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full transition-opacity ${isPending ? 'opacity-60' : 'opacity-100'} ${item.isPatient
+                                                                        ? 'bg-primary text-white shadow-xs rounded-2xl' +
+                                                                        (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-br-xs' : item.isLastInGroup ? ' rounded-tr-xs' : ' rounded-tr-xs rounded-br-xs')
+                                                                        : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs rounded-2xl' +
+                                                                        (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-bl-xs' : item.isLastInGroup ? ' rounded-tl-xs' : ' rounded-tl-xs rounded-bl-xs')
+                                                                        }`}
+                                                                >
+                                                                    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{item.message.body}</p>
+                                                                </div>
+                                                                <span
+                                                                    className={`absolute ${item.isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
+                                                                        transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none top-1/2 -translate-y-1/2
+                                                                        ${activeTimeMsgId === item.id ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'} 
+                                                                    `}
+                                                                >
+                                                                    {formatBubbleTime(item.message.sentAt)}
+                                                                </span>
+                                                            </div>
+                                                            
+                                                            {/* Render Reactions */}
+                                                            {item.message.reactions && Object.keys(item.message.reactions).length > 0 && (
+                                                                <div className={`flex flex-wrap gap-1 mt-0.5 w-full ${item.isPatient ? 'justify-end' : 'justify-start'}`}>
+                                                                    {Object.entries(item.message.reactions).map(([emoji, { count, reactorIds }]) => {
+                                                                        const hasReacted = conversation?.patientId ? reactorIds.includes(conversation.patientId) : false;
+                                                                        return (
+                                                                            <button
+                                                                                key={emoji}
+                                                                                onClick={() => toggleReaction(item.id, emoji)}
+                                                                                className={`flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded-full border transition-colors shadow-xs
+                                                                                    ${hasReacted 
+                                                                                        ? 'bg-primary/10 border-primary/30 text-primary dark:text-primary-light' 
+                                                                                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                                                                    }`}
+                                                                            >
+                                                                                <span className="text-[13px] leading-none">{emoji}</span>
+                                                                                <span className="leading-none">{count}</span>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
 
                                                     {item.showStatusBlock && (
@@ -396,7 +627,6 @@ function ChatPageInner() {
                                                             )}
                                                         </div>
                                                     )}
-                                                    {/* </div> */}
                                                 </div>
                                             )}
                                         </div>
@@ -439,9 +669,74 @@ function ChatPageInner() {
                 {/* Message Input Form */}
                 <form
                     onSubmit={handleSendMessage}
-                    className="p-4 border-t border-slate-150 dark:border-slate-850 bg-white dark:bg-slate-900 shrink-0"
+                    className="p-4 border-t border-slate-150 dark:border-slate-850 bg-white dark:bg-slate-900 shrink-0 relative"
                 >
+                    {replyingTo && (
+                        <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-2.5 mb-3 border border-slate-200 dark:border-slate-700 relative shadow-sm">
+                            <div className="w-1 absolute left-0 top-2 bottom-2 bg-primary rounded-r-md"></div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-primary mb-0.5">
+                                    Replying to {replyingTo.senderType === 'patient' ? 'You' : 'Clinic'}
+                                </p>
+                                <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
+                                    {replyingTo.body}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setReplyingTo(null)}
+                                className="p-1 rounded-full text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Emoji Picker Popover */}
+                    {showEmojiPicker && (
+                        <div
+                            ref={emojiPickerRef}
+                            className="absolute bottom-full left-4 mb-2 z-50 drop-shadow-2xl"
+                        >
+                            <EmojiPicker
+                                onEmojiClick={handleEmojiClick}
+                                theme={"auto" as any}
+                                emojiStyle={"native" as any}
+                                height={380}
+                                width={320}
+                                searchPlaceholder="Find emoji..."
+                                lazyLoadEmojis
+                                previewConfig={{ showPreview: false }}
+                                style={{
+                                    '--epr-bg-color': 'var(--color-background, #fff)',
+                                    '--epr-category-label-bg-color': 'var(--color-background, #fff)',
+                                    '--epr-text-color': 'var(--color-foreground, #0f172a)',
+                                    '--epr-search-border-color': 'var(--color-border, #e2e8f0)',
+                                    '--epr-border-color': 'var(--color-border, #e2e8f0)',
+                                    borderRadius: '16px',
+                                    border: '1px solid',
+                                    borderColor: 'var(--color-border, #e2e8f0)',
+                                } as React.CSSProperties}
+                            />
+                        </div>
+                    )}
+
                     <div className="flex items-end gap-3">
+                        {/* Emoji Button */}
+                        <button
+                            ref={emojiBtnRef}
+                            type="button"
+                            aria-label="Open emoji picker"
+                            onClick={() => setShowEmojiPicker(prev => !prev)}
+                            className={`flex h-11 w-11 items-center justify-center rounded-xl border transition-all shrink-0 cursor-pointer
+                            ${showEmojiPicker
+                                    ? 'bg-primary/10 border-primary/30 text-primary'
+                                    : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700/80 text-slate-400 hover:text-primary dark:hover:text-primary'
+                                }`}
+                        >
+                            <Smile className="w-5 h-5" />
+                        </button>
+
                         <textarea
                             ref={inputRef}
                             value={inputText}
