@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, UIEvent, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown, Smile, SmilePlus, CornerUpLeft, X, ImagePlus } from 'lucide-react';
+import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown, Smile, SmilePlus, CornerUpLeft, X, ImagePlus, Flame } from 'lucide-react';
 import { useChat, ChatMessage } from '@/hooks/useChat';
 import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
@@ -402,13 +402,24 @@ function ChatPageInner() {
                             <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold shadow-sm">
                                 AKC
                                 {isClinicOnline && (<span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 bg-green-500" />)}
-                                {/* <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white dark:border-slate-900 ${isClinicOnline ? 'bg-green-500' : 'bg-amber-400'}`} /> */}
                             </div>
                             <div>
                                 <h1 className="text-base font-bold text-slate-900 dark:text-white leading-tight">Adelaide Knee Clinic</h1>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">{isClinicOnline ? 'Online' : 'Typically replies within 1 business day'}</p>
                             </div>
                         </div>
+                        
+                        {/* Streak Indicator */}
+                        {conversation && (conversation.streakCount >= 2 || (conversation.streakCount === 1 && conversation.streakActiveToday)) && (
+                            <div className={`flex items-center gap-1.5 font-bold text-sm px-3 py-1.5 rounded-full transition-colors shadow-sm border ${
+                                conversation.streakActiveToday 
+                                    ? 'bg-orange-50 text-orange-500 border-orange-100 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20' 
+                                    : 'bg-slate-50 text-slate-400 border-slate-100 dark:bg-slate-800/50 dark:text-slate-500 dark:border-slate-700/50'
+                            }`}>
+                                <Flame className={`w-4 h-4 ${conversation.streakActiveToday ? 'fill-orange-500 dark:fill-orange-400 text-orange-500 dark:text-orange-400' : 'fill-slate-400 dark:fill-slate-500 text-slate-400 dark:text-slate-500'}`} />
+                                {conversation.streakCount}
+                            </div>
+                        )}
                     </div>
                     {/* Reconnection Banner */}
 

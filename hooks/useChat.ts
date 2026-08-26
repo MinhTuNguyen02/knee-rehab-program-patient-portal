@@ -23,13 +23,13 @@ export interface ChatMessage {
 export function useChat() {
     const { socket, isConnected, isReconnecting } = useSocket();
 
-    const { data: conversation, error: convError, isLoading: convLoading } = useSWR(
+    const { data: conversation, error: convError, isLoading: convLoading, mutate } = useSWR(
         '/api/patient/chat/conversation',
         async (url) => {
             const res = await fetch(url);
             const json = await res.json();
             if (!res.ok) throw new Error(json.error?.message || 'Failed to load conversation');
-            return json;
+            return json.data || json;
         },
         { revalidateOnFocus: false }
     );
@@ -120,10 +120,10 @@ export function useChat() {
 
         const handleMessageReceive = (message: ChatMessage) => {
             setMessages(prev => {
-                const existingIds = new Set(prev.map(m => m.id));
-                if (existingIds.has(message.id)) return prev;
+                if (prev.some(m => m.id === message.id)) return prev;
                 return [...prev, message];
             });
+            mutate();
             socket.emit('message:read', { conversationId: conversation.id });
         };
 
@@ -253,6 +253,7 @@ export function useChat() {
                     // Remove from queue only after success
                     pendingQueueRef.current = pendingQueueRef.current.slice(1);
                     syncQueueToStorage(pendingQueueRef.current);
+                    mutate(); // Refresh conversation state (for streak counts, etc.)
 
                     setMessages(prev => {
                         const mapped = prev.map(m =>
