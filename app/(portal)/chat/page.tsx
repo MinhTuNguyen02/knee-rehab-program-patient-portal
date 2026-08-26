@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, UIEvent, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown, Smile, SmilePlus, CornerUpLeft } from 'lucide-react';
+import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown, Smile, SmilePlus, CornerUpLeft, X, ImagePlus } from 'lucide-react';
 import { useChat, ChatMessage } from '@/hooks/useChat';
 import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { formatBubbleTime, formatDateDivider } from '@/lib/utils';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { EmojiClickData } from 'emoji-picker-react';
+import ImageLightbox from '@/components/ImageLightbox';
 
 const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
@@ -61,6 +62,10 @@ function ChatPageInner() {
 
     const [inputText, setInputText] = useState('');
     const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+    const [imageToSend, setImageToSend] = useState<string | null>(null);
+    const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
+    const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
     const parentRef = useRef<HTMLDivElement>(null);
     const previousHeightRef = useRef<number>(0);
@@ -68,6 +73,7 @@ function ChatPageInner() {
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const emojiPickerRef = useRef<HTMLDivElement>(null);
     const emojiBtnRef = useRef<HTMLButtonElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [activeTimeMsgId, setActiveTimeMsgId] = useState<string | null>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
@@ -263,11 +269,55 @@ function ChatPageInner() {
         target.style.height = `${target.scrollHeight}px`;
     };
 
+    const uploadImageFile = async (file: File) => {
+        setIsUploadingImage(true);
+        setImagePreviewUrl(URL.createObjectURL(file));
+        try {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch('/api/patient/chat/upload-image', { method: 'POST', body: fd });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error?.message || 'Upload failed');
+            setImageToSend(json.data?.url || json.url);
+        } catch (err: any) {
+            setImagePreviewUrl(null);
+            setImageToSend(null);
+            toast.error(err.message || 'Image upload failed');
+        } finally {
+            setIsUploadingImage(false);
+        }
+    };
+
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) uploadImageFile(file);
+        e.target.value = '';
+    };
+
+    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of Array.from(items)) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (file) uploadImageFile(file);
+                return;
+            }
+        }
+    };
+
+    const clearImage = () => {
+        setImageToSend(null);
+        if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+        setImagePreviewUrl(null);
+    };
+
     const handleSendMessage = async (e: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault();
 
         const text = inputText.trim();
-        if (!text || sending) return;
+        if ((!text && !imageToSend) || sending || isUploadingImage) return;
 
         setInputText('');
 
@@ -277,8 +327,11 @@ function ChatPageInner() {
         inputRef.current?.focus();
         scrollToBottom();
 
+        const imgUrl = imageToSend;
+        clearImage();
+
         try {
-            await sendMessage(text, replyingTo || undefined);
+            await sendMessage(text, replyingTo || undefined, imgUrl || undefined);
             setReplyingTo(null);
             scrollToBottom();
         } catch (err) {
@@ -549,7 +602,11 @@ function ChatPageInner() {
                                                                     <p className="font-semibold mb-0.5 opacity-80">
                                                                         {item.message.replyToMessage.senderType === 'patient' ? 'Patient' : 'Clinic'}
                                                                     </p>
-                                                                    <p className="truncate opacity-90">{item.message.replyToMessage.body}</p>
+                                                                    {item.message.replyToMessage.imageUrl ? (
+                                                                        <p className="opacity-70 italic">📷 Image</p>
+                                                                    ) : (
+                                                                        <p className="truncate opacity-90">{item.message.replyToMessage.body}</p>
+                                                                    )}
                                                                     <div className={`absolute top-full w-2 h-2 bg-slate-100 dark:bg-slate-800/80 border-b border-r border-slate-200/50 dark:border-slate-700/50 transform rotate-45 ${item.isPatient ? 'right-4 -mt-1' : 'left-4 -mt-1'}`}></div>
                                                                 </div>
                                                             )}
@@ -558,14 +615,30 @@ function ChatPageInner() {
                                                                 onClick={() => setActiveTimeMsgId(prev => prev === item.id ? null : item.id)}
                                                             >
                                                                 <div
-                                                                    className={`px-4.5 py-2.5 text-base leading-relaxed max-w-full transition-opacity ${isPending ? 'opacity-60' : 'opacity-100'} ${item.isPatient
+                                                                    className={`transition-opacity overflow-hidden ${isPending ? 'opacity-60' : 'opacity-100'} ${item.isPatient
                                                                         ? 'bg-primary text-white shadow-xs rounded-2xl' +
                                                                         (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-br-xs' : item.isLastInGroup ? ' rounded-tr-xs' : ' rounded-tr-xs rounded-br-xs')
                                                                         : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs rounded-2xl' +
                                                                         (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-bl-xs' : item.isLastInGroup ? ' rounded-tl-xs' : ' rounded-tl-xs rounded-bl-xs')
-                                                                        }`}
+                                                                        } ${item.message.imageUrl && !item.message.body ? 'p-1' : 'px-4.5 py-2.5'}`}
                                                                 >
-                                                                    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left">{item.message.body}</p>
+                                                                    {item.message.imageUrl && (
+                                                                        <img
+                                                                            src={item.message.imageUrl}
+                                                                            alt="Shared image"
+                                                                            className="max-w-[280px] max-h-[320px] w-auto h-auto object-cover rounded-lg cursor-zoom-in block"
+                                                                            style={{ display: 'block' }}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                setLightboxSrc(item.message.imageUrl || null);
+                                                                            }}
+                                                                        />
+                                                                    )}
+                                                                    {item.message.body && (
+                                                                        <p className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left ${item.message.imageUrl ? 'mt-1.5 px-2 pb-1' : ''}`}>
+                                                                            {item.message.body}
+                                                                        </p>
+                                                                    )}
                                                                 </div>
                                                                 <span
                                                                     className={`absolute ${item.isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
@@ -692,6 +765,34 @@ function ChatPageInner() {
                         </div>
                     )}
 
+                    {/* Image preview strip */}
+                    {imagePreviewUrl && (
+                        <div className="flex items-center gap-3 mb-3">
+                            <div className="relative inline-block">
+                                <img
+                                    src={imagePreviewUrl}
+                                    alt="Image to send"
+                                    className="h-20 w-20 object-cover rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm"
+                                />
+                                {isUploadingImage && (
+                                    <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
+                                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    </div>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={clearImage}
+                                    disabled={isUploadingImage}
+                                    className="absolute -top-2 -right-2 w-5 h-5 bg-slate-700 text-white rounded-full flex items-center justify-center hover:bg-red-500 transition-colors cursor-pointer"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </div>
+                            {!isUploadingImage && <span className="text-xs text-green-600 dark:text-green-400 font-medium">Ready to send</span>}
+                            {isUploadingImage && <span className="text-xs text-slate-500 dark:text-slate-400">Uploading...</span>}
+                        </div>
+                    )}
+
                     {/* Emoji Picker Popover */}
                     {showEmojiPicker && (
                         <div
@@ -722,6 +823,15 @@ function ChatPageInner() {
                     )}
 
                     <div className="flex items-end gap-3">
+                        {/* Hidden file input */}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleFileSelect}
+                        />
+
                         {/* Emoji Button */}
                         <button
                             ref={emojiBtnRef}
@@ -737,12 +847,22 @@ function ChatPageInner() {
                             <Smile className="w-5 h-5" />
                         </button>
 
+                        {/* Image Button */}
+                        <button
+                            type="button"
+                            aria-label="Send image"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isUploadingImage}
+                            className="flex h-11 w-11 items-center justify-center rounded-xl border transition-all shrink-0 cursor-pointer bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700/80 text-slate-400 hover:text-primary dark:hover:text-primary disabled:opacity-40"
+                        >
+                            <ImagePlus className="w-5 h-5" />
+                        </button>
+
                         <textarea
                             ref={inputRef}
                             value={inputText}
                             onChange={handleTextChange}
-                            // disabled={isReconnecting}
-                            // placeholder={isReconnecting ? "Reconnecting..." : "Type a message..."}
+                            onPaste={handlePaste}
                             placeholder={"Type a message..."}
                             onKeyDown={handleKeyDown}
                             rows={1}
@@ -750,8 +870,7 @@ function ChatPageInner() {
                         />
                         <button
                             type="submit"
-                            // disabled={!inputText.trim() || sending || isReconnecting}
-                            disabled={!inputText.trim() || sending}
+                            disabled={(!inputText.trim() && !imageToSend) || sending || isUploadingImage}
                             className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary hover:bg-primary-hover active:scale-[0.97] transition-all text-white disabled:opacity-30 disabled:pointer-events-none shadow-md shrink-0 shadow-primary/10"
                             aria-label="Send message"
                         >
@@ -760,6 +879,9 @@ function ChatPageInner() {
                     </div>
                 </form>
             </div>
+            {lightboxSrc && (
+                <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+            )}
         </div>
     );
 }

@@ -17,6 +17,7 @@ export interface ChatMessage {
     reactions?: Record<string, { count: number; reactorIds: string[] }>;
     replyToMessageId?: string;
     replyToMessage?: ChatMessage;
+    imageUrl?: string;
 }
 
 export function useChat() {
@@ -48,7 +49,7 @@ export function useChat() {
     const [isClinicOnline, setIsClinicOnline] = useState(false);
 
     // Offline queue: stored in ref and synced to localStorage
-    const pendingQueueRef = useRef<{ id: string; body: string; client_timestamp: number; replyToMessageId?: string }[]>([]);
+    const pendingQueueRef = useRef<{ id: string; body: string; client_timestamp: number; replyToMessageId?: string; imageUrl?: string }[]>([]);
     const isFlushingRef = useRef(false);
     const [flushTrigger, setFlushTrigger] = useState(0);
 
@@ -241,6 +242,7 @@ export function useChat() {
                             client_timestamp: pending.client_timestamp,
                             body: pending.body,
                             replyToMessageId: pending.replyToMessageId,
+                            imageUrl: pending.imageUrl,
                         }, (response: any) => {
                             clearTimeout(timer);
                             if (response?.id) resolve(response);
@@ -329,8 +331,8 @@ export function useChat() {
     }, [conversation, isConnected, socket]);
 
     // 3. Send Message Logic: Only updates Optimistic UI and enqueues
-    const sendMessage = async (body: string, replyToMessage?: ChatMessage) => {
-        if (!body.trim() || !conversation) return;
+    const sendMessage = async (body: string, replyToMessage?: ChatMessage, imageUrl?: string) => {
+        if ((!body.trim() && !imageUrl) || !conversation) return;
 
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         if (socket && isConnected) socket.emit('typing:stop', { conversationId: conversation.id });
@@ -349,6 +351,7 @@ export function useChat() {
             client_timestamp: clientTimestamp,
             replyToMessageId: replyToMessage?.id,
             replyToMessage: replyToMessage,
+            imageUrl,
         };
 
         // Always show optimistic message immediately
@@ -359,7 +362,8 @@ export function useChat() {
             id: realUuid, 
             body: body.trim(), 
             client_timestamp: clientTimestamp,
-            replyToMessageId: replyToMessage?.id
+            replyToMessageId: replyToMessage?.id,
+            imageUrl
         }];
         syncQueueToStorage(pendingQueueRef.current);
 
