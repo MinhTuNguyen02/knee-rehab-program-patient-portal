@@ -164,11 +164,14 @@ function ChatPageInner() {
         overscan: 10,
     });
 
-    // Wrap measureElement in useCallback to avoid flushSync-inside-render warning
-    // flushSync is called internally by react-virtual; using a stable callback ref
-    // ensures it fires after DOM commit, not during React's render phase.
+    // Defer measureElement via queueMicrotask to prevent flushSync-inside-render error.
     const measureRef = useCallback((el: Element | null) => {
-        virtualizer.measureElement(el);
+        if (!el) return;
+        queueMicrotask(() => {
+            if (el.isConnected) {
+                virtualizer.measureElement(el);
+            }
+        });
     }, [virtualizer]);
 
     // Close emoji picker when clicking outside
@@ -408,14 +411,13 @@ function ChatPageInner() {
                                 <p className="text-xs text-slate-500 dark:text-slate-400">{isClinicOnline ? 'Online' : 'Typically replies within 1 business day'}</p>
                             </div>
                         </div>
-                        
+
                         {/* Streak Indicator */}
                         {conversation && (conversation.streakCount >= 2 || (conversation.streakCount === 1 && conversation.streakActiveToday)) && (
-                            <div className={`flex items-center gap-1.5 font-bold text-sm px-3 py-1.5 rounded-full transition-colors shadow-sm border ${
-                                conversation.streakActiveToday 
-                                    ? 'bg-orange-50 text-orange-500 border-orange-100 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20' 
+                            <div className={`flex items-center gap-1.5 font-bold text-sm px-3 py-1.5 rounded-full transition-colors shadow-sm border ${conversation.streakActiveToday
+                                    ? 'bg-orange-50 text-orange-500 border-orange-100 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20'
                                     : 'bg-slate-50 text-slate-400 border-slate-100 dark:bg-slate-800/50 dark:text-slate-500 dark:border-slate-700/50'
-                            }`}>
+                                }`}>
                                 <Flame className={`w-4 h-4 ${conversation.streakActiveToday ? 'fill-orange-500 dark:fill-orange-400 text-orange-500 dark:text-orange-400' : 'fill-slate-400 dark:fill-slate-500 text-slate-400 dark:text-slate-500'}`} />
                                 {conversation.streakCount}
                             </div>
@@ -427,23 +429,27 @@ function ChatPageInner() {
 
                 {/* Chat Body Scroll Container */}
                 <div className="flex-1 relative min-h-0 flex flex-col bg-slate-50/50 dark:bg-slate-900/30">
+                    
+                    {/* Reconnection Banner — outside parentRef so it doesn't affect virtualizer */}
+                    {isReconnecting && (
+                        <div className="shrink-0 z-10 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center justify-center gap-2">
+                            <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-600 dark:border-amber-500"></div>
+                            <span className="text-xs font-medium text-amber-700 dark:text-amber-500">Reconnecting...</span>
+                        </div>
+                    )}
+
+                    {/* loadingMore spinner — outside parentRef, absolute to this container */}
+                    {loadingMore && (
+                        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-white/80 dark:bg-slate-800/80 p-2 rounded-full shadow-sm backdrop-blur-sm">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
+                        </div>
+                    )}
 
                     <div
                         ref={parentRef}
                         onScroll={handleScroll}
                         className="flex-1 overflow-y-auto relative p-4"
                     >
-                        {isReconnecting && (
-                            <div className="sticky top-4 z-10 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-2 flex items-center justify-center gap-2 mb-4 mx-auto max-w-sm shadow-sm">
-                                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-600 dark:border-amber-500"></div>
-                                <span className="text-xs font-medium text-amber-700 dark:text-amber-500">Reconnecting...</span>
-                            </div>
-                        )}
-                        {loadingMore && (
-                            <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-white/80 dark:bg-slate-800/80 p-2 rounded-full shadow-sm backdrop-blur-sm">
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
-                            </div>
-                        )}
 
                         {messages.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full py-16 px-4 text-center space-y-4">
@@ -471,7 +477,7 @@ function ChatPageInner() {
 
                                     return (
                                         <div
-                                            key={item.id}
+                                            key={virtualRow.key}
                                             data-index={virtualRow.index}
                                             ref={measureRef}
                                             style={{
@@ -601,7 +607,7 @@ function ChatPageInner() {
                                                         {/* Message bubble + Reactions */}
                                                         <div className={`flex flex-col gap-1 w-full max-w-full ${item.isPatient ? 'items-end' : 'items-start'}`}>
                                                             {item.message.replyToMessage && (
-                                                                <div 
+                                                                <div
                                                                     className={`mb-0 max-w-[85%] text-xs bg-slate-100 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 p-2 rounded-xl border border-slate-200/50 dark:border-slate-700/50 relative cursor-pointer hover:opacity-100 transition-opacity ${item.isPatient ? 'opacity-80' : 'opacity-80'}`}
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
@@ -660,7 +666,7 @@ function ChatPageInner() {
                                                                     {formatBubbleTime(item.message.sentAt)}
                                                                 </span>
                                                             </div>
-                                                            
+
                                                             {/* Render Reactions */}
                                                             {item.message.reactions && Object.keys(item.message.reactions).length > 0 && (
                                                                 <div className={`flex flex-wrap gap-1 mt-0.5 w-full ${item.isPatient ? 'justify-end' : 'justify-start'}`}>
@@ -671,8 +677,8 @@ function ChatPageInner() {
                                                                                 key={emoji}
                                                                                 onClick={() => toggleReaction(item.id, emoji)}
                                                                                 className={`flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded-full border transition-colors shadow-xs
-                                                                                    ${hasReacted 
-                                                                                        ? 'bg-primary/10 border-primary/30 text-primary dark:text-primary-light' 
+                                                                                    ${hasReacted
+                                                                                        ? 'bg-primary/10 border-primary/30 text-primary dark:text-primary-light'
                                                                                         : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
                                                                                     }`}
                                                                             >
@@ -771,7 +777,7 @@ function ChatPageInner() {
                                 onClick={() => setReplyingTo(null)}
                                 className="p-1 rounded-full text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
                             >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
                             </button>
                         </div>
                     )}

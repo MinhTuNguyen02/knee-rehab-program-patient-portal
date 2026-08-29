@@ -151,9 +151,13 @@ export function useChat() {
         };
 
         const handleReactionUpdate = (data: { messageId: string; reactions: Record<string, { count: number; reactorIds: string[] }> }) => {
-            setMessages(prev => prev.map(m => 
+            setMessages(prev => prev.map(m =>
                 m.id === data.messageId ? { ...m, reactions: data.reactions } : m
             ));
+        };
+
+        const handleStreakUpdate = () => {
+            mutate(); // Refresh conversation to get updated streakCount / streakActiveToday
         };
 
         socket.on('message:receive', handleMessageReceive);
@@ -162,6 +166,7 @@ export function useChat() {
         socket.on('typing:stop', handleTypingStop);
         socket.on('staff:status', handleStaffStatus);
         socket.on('reaction:update', handleReactionUpdate);
+        socket.on('streak:update', handleStreakUpdate);
 
         return () => {
             socket.off('message:receive', handleMessageReceive);
@@ -170,6 +175,7 @@ export function useChat() {
             socket.off('typing:stop', handleTypingStop);
             socket.off('staff:status', handleStaffStatus);
             socket.off('reaction:update', handleReactionUpdate);
+            socket.off('streak:update', handleStreakUpdate);
         };
     }, [socket, conversation]);
 
@@ -359,9 +365,9 @@ export function useChat() {
         setMessages(prev => [...prev, optimisticMessage]);
 
         // Add to persistent queue
-        pendingQueueRef.current = [...pendingQueueRef.current, { 
-            id: realUuid, 
-            body: body.trim(), 
+        pendingQueueRef.current = [...pendingQueueRef.current, {
+            id: realUuid,
+            body: body.trim(),
             client_timestamp: clientTimestamp,
             replyToMessageId: replyToMessage?.id,
             imageUrl
