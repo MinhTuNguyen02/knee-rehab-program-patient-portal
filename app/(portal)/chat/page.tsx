@@ -668,27 +668,51 @@ function ChatPageInner() {
                                                             </div>
 
                                                             {/* Render Reactions */}
-                                                            {item.message.reactions && Object.keys(item.message.reactions).length > 0 && (
-                                                                <div className={`flex flex-wrap gap-1 mt-0.5 w-full ${item.isPatient ? 'justify-end' : 'justify-start'}`}>
-                                                                    {Object.entries(item.message.reactions).map(([emoji, { count, reactorIds }]) => {
-                                                                        const hasReacted = conversation?.patientId ? reactorIds.includes(conversation.patientId) : false;
-                                                                        return (
+                                                            {item.message.reactions && Object.keys(item.message.reactions).length > 0 && (() => {
+                                                                const reactionEntries = Object.entries(item.message.reactions!);
+                                                                const totalReactions = reactionEntries.reduce((sum, [_, data]) => sum + data.count, 0);
+                                                                
+                                                                const getTooltip = (reactorIds: string[]) => {
+                                                                    return reactorIds.map(id => conversation?.patientId && id === conversation.patientId ? 'You' : 'Clinic Staff').join(', ');
+                                                                };
+
+                                                                return (
+                                                                    <div className={`flex flex-wrap gap-1 -mt-2.5 relative z-10 w-full ${item.isPatient ? 'justify-end pr-2' : 'justify-start pl-2'}`}>
+                                                                        {totalReactions === 2 && reactionEntries.length === 2 ? (
                                                                             <button
-                                                                                key={emoji}
-                                                                                onClick={() => toggleReaction(item.id, emoji)}
-                                                                                className={`flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded-full border transition-colors shadow-xs
-                                                                                    ${hasReacted
-                                                                                        ? 'bg-primary/10 border-primary/30 text-primary dark:text-primary-light'
-                                                                                        : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
-                                                                                    }`}
+                                                                                title={reactionEntries.map(([emoji, data]) => `${emoji}: ${getTooltip(data.reactorIds)}`).join(' | ')}
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    // Find which emoji the current user reacted to
+                                                                                    const myReaction = reactionEntries.find(([_, data]) => conversation?.patientId && data.reactorIds.includes(conversation.patientId));
+                                                                                    if (myReaction) toggleReaction(item.id, myReaction[0]);
+                                                                                }}
+                                                                                className="flex items-center gap-0.5 px-1.5 py-0.5 text-xs font-medium rounded-full border transition-colors shadow-xs bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
                                                                             >
-                                                                                <span className="text-[13px] leading-none">{emoji}</span>
-                                                                                <span className="leading-none">{count}</span>
+                                                                                <span className="text-[13px] leading-none">{reactionEntries[0][0]}</span>
+                                                                                <span className="text-[13px] leading-none">{reactionEntries[1][0]}</span>
                                                                             </button>
-                                                                        );
-                                                                    })}
-                                                                </div>
-                                                            )}
+                                                                        ) : (
+                                                                            reactionEntries.map(([emoji, { count, reactorIds }]) => {
+                                                                                return (
+                                                                                    <button
+                                                                                        key={emoji}
+                                                                                        title={getTooltip(reactorIds)}
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            toggleReaction(item.id, emoji);
+                                                                                        }}
+                                                                                        className="flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded-full border transition-colors shadow-xs bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                                                                                    >
+                                                                                        <span className="text-[13px] leading-none">{emoji}</span>
+                                                                                        {count > 1 && <span className="leading-none">{count}</span>}
+                                                                                    </button>
+                                                                                );
+                                                                            })
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })()}
                                                         </div>
                                                     </div>
 
