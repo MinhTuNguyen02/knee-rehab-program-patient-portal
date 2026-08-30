@@ -226,6 +226,9 @@ export function useNotifications() {
                 });
 
                 if (fcmToken) {
+                    // Save to local storage for logout
+                    localStorage.setItem('fcmToken', fcmToken);
+
                     // Send to Backend
                     await fetch('/api/patient/fcm-token', {
                         method: 'POST',

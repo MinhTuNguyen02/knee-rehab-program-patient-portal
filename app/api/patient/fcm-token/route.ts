@@ -47,3 +47,16 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: { message: 'Invalid JSON body' } }, { status: 400 });
     }
 }
+
+export async function DELETE(request: Request) {
+    try {
+        const body = await request.json();
+        const { status, data, error } = await fetchFromBE('/patient/fcm-token', 'DELETE', body);
+        if (error) {
+            return NextResponse.json({ error }, { status });
+        }
+        return NextResponse.json(data, { status });
+    } catch (err: any) {
+        return NextResponse.json({ error: { message: 'Invalid JSON body' } }, { status: 400 });
+    }
+}
