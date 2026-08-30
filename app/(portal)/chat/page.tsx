@@ -7,6 +7,7 @@ import { useChat, ChatMessage } from '@/hooks/useChat';
 import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
+import Linkify from 'linkify-react';
 import { formatBubbleTime, formatDateDivider } from '@/lib/utils';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { EmojiClickData } from 'emoji-picker-react';
@@ -213,6 +214,13 @@ function ChatPageInner() {
         });
     }, [inputText]);
 
+    const getLinkifyOptions = (isOwnMessage: boolean) => ({
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        className: `underline hover:opacity-80 transition-opacity ${!isOwnMessage ? 'text-primary dark:text-blue-400' : ''}`,
+        onClick: (e: any) => e.stopPropagation()
+    });
+
     const scrollToBottom = (smooth = false) => {
         if (flatItems.length > 0) {
             virtualizer.scrollToIndex(flatItems.length - 1, {
@@ -413,10 +421,10 @@ function ChatPageInner() {
                         </div>
 
                         {/* Streak Indicator */}
-                        {conversation && (conversation.streakCount >= 2 || (conversation.streakCount === 1 && conversation.streakActiveToday)) && (
+                        {conversation && conversation.streakCount >= 3 && (
                             <div className={`flex items-center gap-1.5 font-bold text-sm px-3 py-1.5 rounded-full transition-colors shadow-sm border ${conversation.streakActiveToday
-                                    ? 'bg-orange-50 text-orange-500 border-orange-100 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20'
-                                    : 'bg-slate-50 text-slate-400 border-slate-100 dark:bg-slate-800/50 dark:text-slate-500 dark:border-slate-700/50'
+                                ? 'bg-orange-50 text-orange-500 border-orange-100 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/20'
+                                : 'bg-slate-50 text-slate-400 border-slate-100 dark:bg-slate-800/50 dark:text-slate-500 dark:border-slate-700/50'
                                 }`}>
                                 <Flame className={`w-4 h-4 ${conversation.streakActiveToday ? 'fill-orange-500 dark:fill-orange-400 text-orange-500 dark:text-orange-400' : 'fill-slate-400 dark:fill-slate-500 text-slate-400 dark:text-slate-500'}`} />
                                 {conversation.streakCount}
@@ -429,7 +437,7 @@ function ChatPageInner() {
 
                 {/* Chat Body Scroll Container */}
                 <div className="flex-1 relative min-h-0 flex flex-col bg-slate-50/50 dark:bg-slate-900/30">
-                    
+
                     {/* Reconnection Banner — outside parentRef so it doesn't affect virtualizer */}
                     {isReconnecting && (
                         <div className="shrink-0 z-10 bg-amber-50 dark:bg-amber-900/30 border-b border-amber-200 dark:border-amber-800 px-4 py-2 flex items-center justify-center gap-2">
@@ -653,7 +661,7 @@ function ChatPageInner() {
                                                                     )}
                                                                     {item.message.body && (
                                                                         <p className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left ${item.message.imageUrl ? 'mt-1.5 px-2 pb-1' : ''}`}>
-                                                                            {item.message.body}
+                                                                            <Linkify options={getLinkifyOptions(item.isPatient)}>{item.message.body}</Linkify>
                                                                         </p>
                                                                     )}
                                                                 </div>
@@ -671,7 +679,7 @@ function ChatPageInner() {
                                                             {item.message.reactions && Object.keys(item.message.reactions).length > 0 && (() => {
                                                                 const reactionEntries = Object.entries(item.message.reactions!);
                                                                 const totalReactions = reactionEntries.reduce((sum, [_, data]) => sum + data.count, 0);
-                                                                
+
                                                                 const getTooltip = (reactorIds: string[]) => {
                                                                     return reactorIds.map(id => conversation?.patientId && id === conversation.patientId ? 'You' : 'Clinic Staff').join(', ');
                                                                 };
