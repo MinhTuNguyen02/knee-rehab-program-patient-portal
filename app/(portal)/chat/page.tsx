@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, UIEvent, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown, Smile, SmilePlus, CornerUpLeft, X, ImagePlus, Flame } from 'lucide-react';
+import { Send, Check, CheckCheck, MessageSquare, AlertCircle, ArrowLeft, ChevronDown, Smile, SmilePlus, CornerUpLeft, X, ImagePlus, Flame, Sticker } from 'lucide-react';
 import { useChat, ChatMessage } from '@/hooks/useChat';
 import { SocketProvider } from '@/hooks/useSocket';
 import toast from 'react-hot-toast';
@@ -12,6 +12,7 @@ import { formatBubbleTime, formatDateDivider } from '@/lib/utils';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { EmojiClickData } from 'emoji-picker-react';
 import ImageLightbox from '@/components/ImageLightbox';
+import { StickerPicker } from '@/components/chat/StickerPicker';
 
 const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
@@ -79,11 +80,31 @@ function ChatPageInner() {
     const [activeTimeMsgId, setActiveTimeMsgId] = useState<string | null>(null);
     const [showScrollButton, setShowScrollButton] = useState(false);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+    const [showStickerPicker, setShowStickerPicker] = useState(false);
     const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
     const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
 
+    const stickerPickerRef = useRef<HTMLDivElement>(null);
+    const stickerBtnRef = useRef<HTMLButtonElement>(null);
     const reactionPickerRef = useRef<HTMLDivElement>(null);
     const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Close sticker picker when clicking outside
+    useEffect(() => {
+        if (!showStickerPicker) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                stickerPickerRef.current &&
+                !stickerPickerRef.current.contains(e.target as Node) &&
+                stickerBtnRef.current &&
+                !stickerBtnRef.current.contains(e.target as Node)
+            ) {
+                setShowStickerPicker(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showStickerPicker]);
 
     const lastReadPatientMsgId = useMemo(() => {
         const lastReadMsg = [...messages].reverse().find(m => m.senderType === 'patient' && m.readAt);
@@ -639,32 +660,42 @@ function ChatPageInner() {
                                                                 className={`relative group flex items-center cursor-pointer sm:cursor-auto w-fit max-w-full ${item.isPatient ? 'ml-auto' : 'mr-auto'}`}
                                                                 onClick={() => setActiveTimeMsgId(prev => prev === item.id ? null : item.id)}
                                                             >
-                                                                <div
-                                                                    className={`transition-opacity overflow-hidden ${isPending ? 'opacity-60' : 'opacity-100'} ${item.isPatient
-                                                                        ? 'bg-primary text-white shadow-xs rounded-2xl' +
-                                                                        (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-br-xs' : item.isLastInGroup ? ' rounded-tr-xs' : ' rounded-tr-xs rounded-br-xs')
-                                                                        : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs rounded-2xl' +
-                                                                        (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-bl-xs' : item.isLastInGroup ? ' rounded-tl-xs' : ' rounded-tl-xs rounded-bl-xs')
-                                                                        } ${item.message.imageUrl && !item.message.body ? 'p-1' : 'px-4.5 py-2.5'}`}
-                                                                >
-                                                                    {item.message.imageUrl && (
+                                                                {item.message.stickerUrl ? (
+                                                                    <div className="p-1 transition-opacity">
                                                                         <img
-                                                                            src={item.message.imageUrl}
-                                                                            alt="Shared image"
-                                                                            className="max-w-[280px] max-h-[320px] w-auto h-auto object-cover rounded-lg cursor-zoom-in block"
-                                                                            style={{ display: 'block' }}
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                setLightboxSrc(item.message.imageUrl || null);
-                                                                            }}
+                                                                            src={item.message.stickerUrl}
+                                                                            alt="Sticker"
+                                                                            className="w-[130px] h-[130px] object-contain select-none block drop-shadow-xs hover:scale-105 transition-transform"
                                                                         />
-                                                                    )}
-                                                                    {item.message.body && (
-                                                                        <p className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left ${item.message.imageUrl ? 'mt-1.5 px-2 pb-1' : ''}`}>
-                                                                            <Linkify options={getLinkifyOptions(item.isPatient)}>{item.message.body}</Linkify>
-                                                                        </p>
-                                                                    )}
-                                                                </div>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div
+                                                                        className={`transition-opacity overflow-hidden ${isPending ? 'opacity-60' : 'opacity-100'} ${item.isPatient
+                                                                            ? 'bg-primary text-white shadow-xs rounded-2xl' +
+                                                                            (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-br-xs' : item.isLastInGroup ? ' rounded-tr-xs' : ' rounded-tr-xs rounded-br-xs')
+                                                                            : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 shadow-2xs rounded-2xl' +
+                                                                            (item.isFirstInGroup && item.isLastInGroup ? '' : item.isFirstInGroup ? ' rounded-bl-xs' : item.isLastInGroup ? ' rounded-tl-xs' : ' rounded-tl-xs rounded-bl-xs')
+                                                                            } ${item.message.imageUrl && !item.message.body ? 'p-1' : 'px-4.5 py-2.5'}`}
+                                                                    >
+                                                                        {item.message.imageUrl && (
+                                                                            <img
+                                                                                src={item.message.imageUrl}
+                                                                                alt="Shared image"
+                                                                                className="max-w-[280px] max-h-[320px] w-auto h-auto object-cover rounded-lg cursor-zoom-in block"
+                                                                                style={{ display: 'block' }}
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setLightboxSrc(item.message.imageUrl || null);
+                                                                                }}
+                                                                            />
+                                                                        )}
+                                                                        {item.message.body && (
+                                                                            <p className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-left ${item.message.imageUrl ? 'mt-1.5 px-2 pb-1' : ''}`}>
+                                                                                <Linkify options={getLinkifyOptions(item.isPatient)}>{item.message.body}</Linkify>
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
+                                                                )}
                                                                 <span
                                                                     className={`absolute ${item.isPatient ? 'right-full mr-3' : 'left-full ml-3'} 
                                                                         transition-opacity duration-200 text-xs font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap select-none top-1/2 -translate-y-1/2
@@ -871,6 +902,25 @@ function ChatPageInner() {
                         </div>
                     )}
 
+                    {/* Sticker Picker Popover */}
+                    {showStickerPicker && (
+                        <div
+                            ref={stickerPickerRef}
+                            className="absolute bottom-full left-4 mb-2 z-50 drop-shadow-2xl"
+                        >
+                            <StickerPicker
+                                onSelectSticker={async (stickerUrl) => {
+                                    setShowStickerPicker(false);
+                                    try {
+                                        await sendMessage('', replyingTo || undefined, undefined, stickerUrl);
+                                        setReplyingTo(null);
+                                    } catch (err) { }
+                                }}
+                                onClose={() => setShowStickerPicker(false)}
+                            />
+                        </div>
+                    )}
+
                     <div className="flex items-end gap-3">
                         {/* Hidden file input */}
                         <input
@@ -886,7 +936,10 @@ function ChatPageInner() {
                             ref={emojiBtnRef}
                             type="button"
                             aria-label="Open emoji picker"
-                            onClick={() => setShowEmojiPicker(prev => !prev)}
+                            onClick={() => {
+                                setShowEmojiPicker(prev => !prev);
+                                setShowStickerPicker(false);
+                            }}
                             className={`flex h-11 w-11 items-center justify-center rounded-xl border transition-all shrink-0 cursor-pointer
                             ${showEmojiPicker
                                     ? 'bg-primary/10 border-primary/30 text-primary'
@@ -894,6 +947,24 @@ function ChatPageInner() {
                                 }`}
                         >
                             <Smile className="w-5 h-5" />
+                        </button>
+
+                        {/* Sticker Button */}
+                        <button
+                            ref={stickerBtnRef}
+                            type="button"
+                            aria-label="Open sticker picker"
+                            onClick={() => {
+                                setShowStickerPicker(prev => !prev);
+                                setShowEmojiPicker(false);
+                            }}
+                            className={`flex h-11 w-11 items-center justify-center rounded-xl border transition-all shrink-0 cursor-pointer
+                            ${showStickerPicker
+                                    ? 'bg-primary/10 border-primary/30 text-primary'
+                                    : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700/80 text-slate-400 hover:text-primary dark:hover:text-primary'
+                                }`}
+                        >
+                            <Sticker className="w-5 h-5" />
                         </button>
 
                         {/* Image Button */}

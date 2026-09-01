@@ -18,6 +18,7 @@ export interface ChatMessage {
     replyToMessageId?: string;
     replyToMessage?: ChatMessage;
     imageUrl?: string;
+    stickerUrl?: string;
 }
 
 export function useChat() {
@@ -249,6 +250,7 @@ export function useChat() {
                             body: pending.body,
                             replyToMessageId: pending.replyToMessageId,
                             imageUrl: pending.imageUrl,
+                            stickerUrl: pending.stickerUrl,
                         }, (response: any) => {
                             clearTimeout(timer);
                             if (response?.id) resolve(response);
@@ -283,7 +285,7 @@ export function useChat() {
         };
 
         flushQueue();
-    }, [flushTrigger, socket, isConnected, conversation, syncQueueToStorage]);
+    }, [flushTrigger, socket, isConnected, conversation, syncQueueToStorage, mutate]);
 
     useEffect(() => {
         if (isConnected && messages.length > 0) {
@@ -338,8 +340,8 @@ export function useChat() {
     }, [conversation, isConnected, socket]);
 
     // 3. Send Message Logic: Only updates Optimistic UI and enqueues
-    const sendMessage = async (body: string, replyToMessage?: ChatMessage, imageUrl?: string) => {
-        if ((!body.trim() && !imageUrl) || !conversation) return;
+    const sendMessage = async (body: string, replyToMessage?: ChatMessage, imageUrl?: string, stickerUrl?: string) => {
+        if ((!body.trim() && !imageUrl && !stickerUrl) || !conversation) return;
 
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         if (socket && isConnected) socket.emit('typing:stop', { conversationId: conversation.id });
@@ -359,6 +361,7 @@ export function useChat() {
             replyToMessageId: replyToMessage?.id,
             replyToMessage: replyToMessage,
             imageUrl,
+            stickerUrl,
         };
 
         // Always show optimistic message immediately
@@ -370,7 +373,8 @@ export function useChat() {
             body: body.trim(),
             client_timestamp: clientTimestamp,
             replyToMessageId: replyToMessage?.id,
-            imageUrl
+            imageUrl,
+            stickerUrl,
         }];
         syncQueueToStorage(pendingQueueRef.current);
 
