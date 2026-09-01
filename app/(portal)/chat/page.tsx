@@ -648,7 +648,9 @@ function ChatPageInner() {
                                                                     <p className="font-semibold mb-0.5 opacity-80">
                                                                         {item.message.replyToMessage.senderType === 'patient' ? 'Patient' : 'Clinic'}
                                                                     </p>
-                                                                    {item.message.replyToMessage.imageUrl ? (
+                                                                    {item.message.replyToMessage.stickerUrl ? (
+                                                                        <p className="opacity-70 italic">🎨 Sticker</p>
+                                                                    ) : item.message.replyToMessage.imageUrl ? (
                                                                         <p className="opacity-70 italic">📷 Image</p>
                                                                     ) : (
                                                                         <p className="truncate opacity-90">{item.message.replyToMessage.body}</p>
@@ -832,7 +834,7 @@ function ChatPageInner() {
                                     Replying to {replyingTo.senderType === 'patient' ? 'You' : 'Clinic'}
                                 </p>
                                 <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
-                                    {replyingTo.body}
+                                    {replyingTo.stickerUrl ? '🎨 Sticker' : replyingTo.imageUrl ? '📷 Photo' : replyingTo.body}
                                 </p>
                             </div>
                             <button
