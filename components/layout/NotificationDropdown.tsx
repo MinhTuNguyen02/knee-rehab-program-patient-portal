@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNotifications, PatientNotification } from '@/hooks/useNotifications';
 import { Bell, MessageCircle, ClipboardCheck, Sparkles, Check, CheckSquare, RefreshCw, AlertCircle, X } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatNotificationTime } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 
@@ -237,7 +237,7 @@ export default function NotificationDropdown() {
                                             {notification.title}
                                         </span>
                                         <span className="text-[10px] text-slate-400 dark:text-slate-500 whitespace-nowrap mt-0.5">
-                                            {formatDate(notification.createdAt)}
+                                            {formatNotificationTime(notification.createdAt)}
                                         </span>
                                     </div>
                                     <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
@@ -345,7 +345,7 @@ export default function NotificationDropdown() {
                                                 {notification.title}
                                             </span>
                                             <span className="text-[10px] text-slate-400 dark:text-slate-500 whitespace-nowrap mt-0.5">
-                                                {formatDate(notification.createdAt)}
+                                                {formatNotificationTime(notification.createdAt)}
                                             </span>
                                         </div>
                                         <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">

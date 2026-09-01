@@ -23,15 +23,49 @@ export function validatePassword(password: string): { isValid: boolean; error?: 
   return { isValid: true };
 }
 
+export function parseUtcDate(dateStr: string | Date): Date {
+  if (!dateStr) return new Date(NaN);
+  if (dateStr instanceof Date) return dateStr;
+  let str = dateStr.trim();
+  // If string has ISO format like 2026-09-01T05:47:39 but no Z or offset (+/-), append Z to force UTC parsing
+  if (str.includes('T') && !str.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(str)) {
+    str += 'Z';
+  }
+  return new Date(str);
+}
+
 export function formatDate(dateStr: string | Date): string {
   if (!dateStr) return "";
-  const date = new Date(dateStr);
+  const date = parseUtcDate(dateStr);
+  if (isNaN(date.getTime())) return "";
   return date.toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
     year: "numeric",
   });
 }
+
+export function formatNotificationTime(dateStr: string | Date): string {
+  if (!dateStr) return "";
+  const date = parseUtcDate(dateStr);
+  if (isNaN(date.getTime())) return "";
+  const now = new Date();
+
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+
 
 function getDaysDiff(date: Date, now: Date): number {
   const d1 = new Date(date.getFullYear(), date.getMonth(), date.getDate());
